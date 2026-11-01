@@ -13,7 +13,10 @@ $Repo='C:\Empire\repo'
 $Root='C:\Empire'
 $Port = if($Instance -eq 'staging'){ 8892 } else { 8891 }
 $Task = if($Instance -eq 'staging'){ 'EmpireStaging' } else { 'EmpireProduction' }
-if(-not $Ref){ $Ref = (git -C $Repo rev-parse --verify 'origin/HEAD' 2>$null) ?? 'origin/codex/empire-mvp' }
+if(-not $Ref){
+  git -C $Repo fetch origin codex/deploy-playempire 2>$null | Out-Null
+  $Ref = 'origin/codex/deploy-playempire'
+}
 BEGIN=$_.MyInvocation.MyCommand.Path
 Write-Output "empire:deploy instance=$Instance ref=$Ref"
 
