@@ -18,6 +18,8 @@ Write-Output "empire:$Instance starting release $release on 127.0.0.1:$port"
 while($true){
   & 'C:\Collectz\tools\node\node.exe' --env-file="C:/Empire/shared/$Instance.env" node_modules\tsx\dist\cli.mjs server\src\index.ts >> "$root\shared\logs\$Instance.log" 2>&1
   $code=$LASTEXITCODE
+  "$(Get-Date -Format o) empire:$Instance node exit code=$code; restart in 5s" |
+    Add-Content -Path "$root\shared\logs\$Instance.supervisor.log"
   Write-Output "empire:$Instance process exited code=$code at $(Get-Date -Format o); restart in 5s"
   Start-Sleep -Seconds 5
   # re-read the release pointer so a deploy can replace the running version without stopping the task
