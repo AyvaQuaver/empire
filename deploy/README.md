@@ -1,5 +1,12 @@
 # Empire deployment playbook (playempire.uk)
 
+> **Deployed target is a Windows Server 2025** (`135.181.142.142`) that already
+> hosts another Node app behind **Caddy** — see **[deploy/windows/README.md](deploy/windows/README.md)**
+> for the live architecture (scheduled-task runner mirroring the existing
+> Collectz conventions, shared Caddy served TLS, SQLite under `C:\Empire`,
+> node-based online backups). The Linux systemd/nginx kit below is retained as
+> an alternative for a Linux host.
+
 Target platforms: production `https://playempire.uk` and staging
 `https://staging.playempire.uk` on the user's existing server, Cloudflare-managed
 DNS for the `playempire.uk` zone. Express + SQLite, single instance per
