@@ -25,11 +25,12 @@ const dbFile = tmp + '/empire.db';
 const { writeFileSync } = await import('node:fs');
 writeFileSync(dbFile, json);
 const db = new DatabaseSync(dbFile, { readOnly: true });
-const integ = db.exec('PRAGMA integrity_check;').flat()[0];
-const tables = db.exec("SELECT count(*) FROM sqlite_master WHERE type='table'").flat()[0];
+const integ = db.prepare('PRAGMA integrity_check;').get();
+const integValue = Object.values(integ)[0];
+const tables = Object.values(db.prepare("SELECT count(*) AS c FROM sqlite_master WHERE type='table'").get())[0];
 db.close();
 rmSync(tmp, { recursive: true, force: true });
-if (integ !== 'ok') { console.error('verify FAILED: ' + integ); process.exit(1); }
+if (integValue !== 'ok') { console.error('verify FAILED: ' + integValue); process.exit(1); }
 console.log(`[backup] restore copy verified (integrity ok, ${tables} tables)`);
 '@
   $TmpJs="C:\Empire\backups\.verify.mjs"
@@ -74,8 +75,10 @@ try {
   $verify=@'
 import { DatabaseSync } from 'node:sqlite';
 const db = new DatabaseSync(process.argv[2], { readOnly: true });
-const ok = db.exec('PRAGMA integrity_check;').flat()[0] === 'ok';
-process.exit(ok ? 0 : 2);
+const ok = db.prepare('PRAGMA integrity_check;').get();
+const okValue = Object.values(ok)[0];
+console.log('integrity: ' + okValue);
+process.exit(okValue === 'ok' ? 0 : 2);
 '@
   $tmpJs=Join-Path $tmpv '.check.mjs'
   $verify | Set-Content -Path $tmpJs -Encoding UTF8
