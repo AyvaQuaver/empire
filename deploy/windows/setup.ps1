@@ -16,7 +16,7 @@ $Task  = if($Instance -eq 'staging'){ 'EmpireStaging' } else { 'EmpireProduction
 foreach($d in "$Root\repo","$Root\releases","$Root\shared\logs","$Root\data\$Instance","$Root\backups\$Instance","$Root\tools","$Root\secrets"){
   New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
-icacls $Root /inheritance:r /reset /T /C /grant:r 'Administrators:(OI)(CI)F' /grant:r 'SYSTEM:(OI)(CI)F' /grant:r 'NT AUTHORITY\LOCAL SERVICE:(OI)(CI)RX' | Out-Null
+icacls $Root /T /C /grant:r 'Administrators:(OI)(CI)F' /grant:r 'SYSTEM:(OI)(CI)F' /grant:r 'NT AUTHORITY\LOCAL SERVICE:(OI)(CI)RX' | Out-Null
 foreach($w in "$Root\shared\logs","$Root\data\$Instance","$Root\backups\$Instance"){
   icacls $w /inheritance:r /grant 'Administrators:F' /grant 'NT AUTHORITY\LOCAL SERVICE:F' /grant 'SYSTEM:F' | Out-Null
 }
@@ -26,9 +26,10 @@ if(-not (Test-Path "$Root\repo\.git")){
   & git clone https://github.com/AyvaQuaver/empire.git "$Root\repo"
   if($LASTEXITCODE -ne 0){ throw 'git clone failed' }
 }
-& git -C "$Root\repo" remote add origin 'https://github.com/AyvaQuaver/empire.git' 2>$null | Out-Null
 & git -C "$Root\repo" fetch origin codex/deploy-playempire
+if($LASTEXITCODE -ne 0){ throw 'git fetch failed' }
 & git -C "$Root\repo" checkout --detach origin/codex/deploy-playempire
+if($LASTEXITCODE -ne 0){ throw 'git checkout failed' }
 
 # 3. Env file with generated-on-server secret (redirected; never displayed)
 $EnvFile="$Root\shared\$Instance.env"
