@@ -6,7 +6,7 @@ $root='C:\Empire'
 $releaseFile=Join-Path $root "shared\active-release-$Instance.txt"
 $release=(Get-Content $releaseFile -Raw).Trim()
 if($release -notmatch '^[a-f0-9]{40}$'){throw 'Invalid release identifier'}
-$app=Join-Path "$root\releases" $release
+$app=Join-Path (Join-Path $root "releases\$Instance") $release
 if(-not (Test-Path $app)){throw "Release $release does not exist on disk"}
 $port = if($Instance -eq 'staging'){ 8892 } else { 8891 }
 Set-Location $app
