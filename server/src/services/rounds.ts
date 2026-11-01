@@ -299,9 +299,12 @@ export function acquireLease(
         // Same session re-acquiring (e.g. after a refresh): refresh the lease fencing.
       } else if (!opts.force) {
         throw new AppError(ERR.SPEAKER_ACTIVE, 409, "Someone is already speaking on this screen.");
-      } else if (!player.is_organiser) {
-        throw new AppError(ERR.FORBIDDEN, 403, "Only the organiser can take over.");
       }
+      // An explicit forced takeover by ANY roster member moves the speaker role:
+      // the previous lease is killed (fence bumped) and the old device's acks are
+      // rejected. This transfers only the reading duty — the word list never had
+      // owner metadata, so no one learns who holds which word. The previous
+      // device's audio stops because its run is invalidated and utterances cancel.
     }
     const token = issueLease(db, round.id, player, sessionId, Date.now());
     return { leaseToken: token, mine: true };

@@ -34,7 +34,7 @@ export function Confetti({ seed }: { seed?: number }) {
   const s = seed ?? 1;
   const rotate = (s * 360) % 360;
   return (
-    <svg width="320" height="300" viewBox="0 0 320 300" fill="none" aria-hidden="true" focusable="false" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+    <svg width="320" height="300" viewBox="0 0 320 300" fill="none" aria-hidden="true" focusable="false" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}>
       <g transform={`rotate(${rotate} 160 150)`}>
         {/* coral dashes */}
         <rect x="86" y="30" width="34" height="10" rx="5" fill="#FF684F" transform="rotate(-40 103 35)" />

@@ -131,7 +131,10 @@ describe("authentication flows", () => {
   it("deleting an account anonymizes rows and drops social links", async () => {
     const c = new Client(base);
     await registerUser(c, "bye_now_user");
-    const done = await c.del("/api/auth/account");
+    // delete requires password re-authentication
+    expect((await c.del("/api/auth/account", { password: "wrong-pass-999" })).status).toBe(401);
+    expect((await c.get("/api/me")).json.signedIn).toBe(true); // still signed in after refusal
+    const done = await c.del("/api/auth/account", { password: "correct-horse-battery" });
     expect(done.status).toBe(200);
     const db = t.handle.db;
     const count = db.prepare("SELECT COUNT(*) AS n FROM users WHERE username_canonical = 'bye_now_user'").get() as {

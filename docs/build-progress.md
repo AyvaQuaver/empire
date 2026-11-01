@@ -2,6 +2,58 @@
 
 Date: 2026-11-01 · branch: `codex/empire-mvp` (local repo; no remote configured)
 
+## 0. Post-handoff review round (2026-11-01)
+
+Findings → fixes, all verified:
+
+1. **"Say it yourself" fallback removed** (`web/src/pages/roomviews/ReadingView.tsx`,
+   `WordEntryView.tsx`): the copy "say each word aloud yourself" and its variants are
+   gone. No screen ever renders the words; the only word text exists in the browser
+   TTS engine of the single lease-holding device (documented honestly, incl. the
+   DevTools caveat). Audio failure now recovers via: test-sound, a clear error
+   banner, "Restart this reading (same saved order)" and explicit speaker takeover
+   (any roster member with force; the previous device's lease is killed and its
+   audio stops). Nothing regenerates shuffles or the starter on error.
+2. **One-tap flow** (`ReadingView.tsx`): the normal flow is now one tap — "Start
+   readings" — followed automatically by all three readings and the starter
+   announcement. Recognised-and-fixed dead ends: the organiser could misclick into a
+   state with no way to load the words, and reading N+1 required a manual press.
+   Manual intervention is strictly recovery (pause/failure/refresh mid-reading).
+3. **Authentication audit** (details in `docs/permissions-matrix.md`): scrypt via
+   node:crypto with pepper + timingSafeEqual; hashed session tokens; HttpOnly/
+   SameSite=Lax/Secure cookies; custom-header CSRF; per-IP and per-account rate
+   limits; generic credentials/reset replies; single-use, hashed, expiring
+   verification/reset tokens; reset now revokes all sessions (re-verified); account
+   deletion now requires password re-authentication. New tests: expired/reused reset
+   tokens, sign-out revocation, cache headers, cleanup-endpoint auth, established
+   tests for guest-history claim refusal.
+4. **Cache hardening** (`server/src/app.ts`): every response now sets
+   `Cache-Control: no-store` and `X-Robots-Tag: noindex` — private/state/data never
+   cached by browsers, proxies, or service workers (none registered anyway).
+5. **Dev-outbox staging behaviour** (`server/src/email.ts`): outbox insert + console
+   line restricted to non-production; production without SMTP raises a clear config
+   error (boot warning), never fake delivery success.
+6. **Verified restart persistence** (`/tmp/empire-persist` run): after killing and
+   restarting the server against the same SQLite file, the signed-in cookie still
+   resolves, sign-in works, friendships remain, stats/history intact, and finished
+   rounds' private rows were already purged (0 rows).
+7. **Four-player browser game end-to-end (Chromium)**: lobby polling, UI duplicate
+   word rejection (`Mate 2` typed `PRETZEL` → neutral conflict, prior word kept),
+   one-tap automatic triple reading + starter announced twice in a row (round 2 as
+   re-verification), winner recorded & corrected with stats moving (Mate1 1 win,
+   Mate3 0 wins, both gamesPlayed 1), "Play another round" with the same group,
+   mate's round-1 word reusable in round 2 (`pretzel` accepted, round-1 rows purged
+   — DB checked), Test sound pressed successfully, refresh mid-flow preserved
+   identity/starter and surfaced no words in the DOM.
+8. **320px overflow fixed** (`web/src/components/decor.tsx`): the confetti SVG's
+   presentational `width` beat the container `inset`, causing a 16px horizontal
+   scroll at 320px; now `width/height: 100%` — measured overflow gone (320x320).
+9. **`npm run build` was broken** (`package.json` pointed `tsc -p server` at a
+   nonexistent tsconfig) → fixed to `-p tsconfig.json && -p web/tsconfig.json`.
+10. **Hosting research** (README): Fly.io = no free tier, ~$2.35/mo works with a
+    persistent volume; Render = free tier exists but nothing persistent below
+    ~$7.25/mo. SQLite migration explicitly not made "for looks".
+
 ## 1. Implemented scope (working software, not a mock-up)
 
 - **Server (Express + node:sqlite file DB):** rooms/players/rounds/round roster with
@@ -56,17 +108,34 @@ localhost defaults with file DB `./data/empire.db` (WAL).
 
 ## 4. Test outcomes (honest)
 
-- `npx vitest run` → **7 files / 27 tests, all passing** (~1.5s).
+- `npx vitest run` → **8 files / 33 tests, all passing** (new: `guards.test.ts`
+  session/token/cleanup/cache instrumentation).
 - `npx tsc --noEmit -p tsconfig.json` and `-p web/tsconfig.json` → clean.
 - `npx eslint server/src server/test web/src scripts` → clean (flat config added).
-- `npx vite build` → succeeds (~80 KB gzipped JS).
-- Manual browser flow on localhost (Chromium, 375px frame): create → lobby live
-  polling (external clients joined within one poll) → lock → word entry → three
-  readings driven end-to-end with speech state machine → random starter announced →
-  winner recorded via organiser UI → result view with correction link. Screenshots in
-  `docs/screenshots/` (home @375/390/320, lobby, ready, reading, playing, result).
-- **Real-device testing was NOT performed** (no iOS/Android devices in the loop;
-  screenshots are Chromium at CSS viewport sizes via an iframe harness).
+- `npm run build` → succeeds (~80 KB gzipped JS) — build script itself was broken
+  and is fixed.
+- Manual browser flows on localhost (Chromium, desktop + 320/375/390 CSS frames via
+  a temporary iframe harness — not committed): full FOUR-player game twice,
+  duplicate-word conflict in the UI, winner recording + correction + stats, next
+  round with fresh secrets, Test sound speech playback, explicit speaker takeover
+  coverage in tests, refresh identity checks. Screenshots in `docs/screenshots/`
+  (home @320/375/390 + desktop, lobby, 3-player & 4 players, word entry, ready,
+  reading speaker view, playing, result, corrected result).
+- **Real-device testing was NOT performed**: no physical iOS Safari or Android
+  Chrome in the loop. The short manual checklist for when devices are available:
+  1. Open the app on iPhone Safari; create a room; confirm the room fits the
+     viewport (no zoom-out, no horizontal scroll), tap targets ≥44px feel right.
+  2. Confirm speech: iOS requires the *first* `speechSynthesis.speak()` to happen
+     inside a user gesture — press **Test sound** first, then Start readings.
+  3. Lock screen mid-reading / background the tab: speech pauses (or stops —
+     Safari kills silenced tabs); returning should show the paused state and
+     "Restart readings" recovery.
+  4. Take over as speaker on a second device (Android Chrome): confirm the first
+     device's audio stops within a few seconds and the second device continues.
+  5. Word privacy sanity: organiser's page shows no words anywhere; network tab on
+     the speaker device only shows the word-only payload at lease time.
+- **No staging URL exists** — nothing was purchased; Fly.io is the recommended
+  (~$2.35/mo verified) staging host with one persistent volume (README).
 
 ## 5. Staging URL / blocker
 

@@ -58,10 +58,12 @@ Guarantees verified in tests:
 | Edit genre | ✘ | ✘ | ✔ lobby_open only |
 | Invite friends to room | ✘ | sender only | ✔ (accepted friends, open roster only) |
 
-Note — speaker takeover: any roster member may request takeover with the explicit
-force flag; the current holder's lease is killed (fence bumped) and their stale
-acks are rejected. The UI labels this clearly ("Taking over stops that device's
-lease…").
+Note — speaker takeover: any roster member may take over an **active** lease with
+the explicit force flag (verified in `guards.test.ts`); the current holder's lease
+is killed (fence bumped) and their stale acks are rejected with 403. This moves
+only the reading duty — the word list never carries owner metadata, so the takeover
+grants nothing about word ownership. The UI explains that taking over stops the
+previous device's audio.
 
 ## Server-enforced word-collection rules
 
@@ -90,15 +92,70 @@ Retention implementation: `server/src/services/cleanup.ts` (`runCleanup`, hourly
 in-process + `POST /api/internal/cleanup` for platform CRON + `npm run cleanup`).
 Verified by `cleanup.test.ts` and `roster-retention.test.ts`.
 
+## Authentication implementation (audited)
+
+- **Password hashing:** scrypt via Node's standard `node:crypto` (no third-party
+  crypto, nothing invented). Format `scrypt$<salt hex>$<key hex>` with a 16-byte
+  random salt, 64-byte derived key, an application pepper from `SESSION_SECRET`,
+  and `timingSafeEqual` comparison. Default scrypt work factors (N=16384, r=8, p=1,
+  ~64MB memory per hash). Unknown accounts get equal-cost dummy hashing so sign-in
+  timing doesn't enumerate (`dummyHashWork`); the code lives in `server/src/auth.ts`.
+  `config.isProduction` boots with a loud config error if `SESSION_SECRET` is unset
+  (`server/src/app.ts`).
+- **Sessions:** opaque 32-byte `crypto.randomBytes` tokens (`ids.ts randomToken`),
+  stored **only as SHA-256 hashes** in `sessions`. Cookie `empire_sid`:
+  `HttpOnly`, `SameSite=Lax`, `Path=/`, 90-day expiry on the cookie while the DB
+  row is authoritative, `Secure` automatically when served over TLS (detected via
+  `x-forwarded-proto`, with `trust proxy` = 1). Revocation: explicit sign-out,
+  account deletion, and **password reset deletes every session of that user**
+  (verified: `guards.test.ts > password reset revokes every existing session`).
+  Every API request refreshes `last_seen_at` (sliding inactivity).
+- **CSRF:** `SameSite=Lax` cookies plus a required custom `x-empire-with: fetch`
+  header on all mutating requests (set by the app's own fetch wrapper). A
+  cross-site form cannot send this header without CORS preflight approval.
+- **Rate limits** (in-memory fixed window, `server/src/rateLimit.ts` + routes in
+  `api.ts`): auth (register/verify/sign-in) 20 / 15 min per IP; forgot-password 8 /
+  15 min per IP; reset 10 / 15 min per IP; verification resend 2-min cooldown
+  per account; sign-in creates room-creation throttles and join/word limits too.
+- **No enumeration:** unknown user + wrong password return the identical
+  `INVALID_CREDENTIALS` (with equal-cost work); forgot-password always answers the
+  same sentence; only optionally searchable usernames surface via the intended
+  exact-search endpoint (field-level `USERNAME_TAKEN`/`EMAIL_TAKEN` on register
+  duplicates is deliberate UX, documented as such).
+- **Verification/reset tokens:** 24 random bytes, sent by email, stored hashed
+  (SHA-256) in `email_tokens` with expiry (verify 24h, reset 1h), **single-use**
+  (`used_at` set inside the consuming transaction — reuse → 400, verified in
+  `guards.test.ts > reset tokens are single-use and expire`, which also covers an
+  artificially expired token).
+- **Guest → account upgrade:** registration upgrades the *current* session only;
+  `players.user_id` rows for THIS session's memberships are rebound so stats/
+  history follow the account. No other session's players are claimed (verified:
+  `auth.test.ts > guest membership survives guest→account upgrade and claims no
+  one else's games`).
+- **Account deletion:** requires password **re-authentication** now (a stolen
+  session alone can't destroy an account; wrong password → 401, verified in
+  `auth.test.ts`). Deletion anonymises: `players.user_id`/`sessions.user_id`
+  nulled, friendships/requests/tokens/sessions/user row deleted, result audit rows
+  keep non-personal history.
+- **Logs:** the server never logs words, tokens, cookies or passwords. The
+  development outbox console line (recipient + subject only) exists only when
+  SMTP is unset AND `NODE_ENV` is not production/staging (see below).
+- **Dev email outbox isolation:** `deliverEmail` stores to `email_outbox` and logs
+  only in non-production; **in production/staging with SMTP unset it throws a
+  clear configuration error** instead of pretending to send — surfaced at boot as
+  `CONFIG PROBLEM` (email features effectively disabled until SMTP configured).
+  The preview endpoint `GET /api/dev/outbox` requires `ALLOW_DEV_EMAIL_PREVIEW=true`
+  *and* non-production.
+
 ## Known permission limitations (honest disclosure)
 
 1. Winners are organiser-reported only — the game's mechanics are physical; the app
    trusts the organiser's report (with correction + audit).
 2. The speaker device necessarily receives the word list; anyone with access to that
    device's browser DevTools (network tab) can read the payload. That's inherent to
-   TTS in the browser.
+   TTS in the browser — the interface never displays the words, but the payload
+   arrives on that device and cannot be made fully secret from its owner.
 3. TTS differs between platforms (voice availability, pacing); the stall watchdog
-   and "say it yourself" fallback mitigate.
+   and restart-same-order recovery mitigate.
 4. Sessions are cookie-only; a shared device keeps the player's room membership
-   until sign out or expiry — log-out clears the guest identity (no phantom
-   memberships).
+   until sign out — log-out clears the guest identity (no phantom memberships).

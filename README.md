@@ -76,21 +76,44 @@ Useful bits:
 
 ## Deployment notes (staging)
 
-No paid services or domains are arranged yet. A free-tier deployment works on any
-host that provides persistent Node + disk for the SQLite file (Render, Fly.io,
-Railway):
+**Supported deployment model (important):**
 
-1. Deploy as a single service: `npm ci && npx tsc -p tsconfig.json --noEmit && npm run build` then `node --run` … start with `npm run server` (the server serves `dist/`
-   and the API on one port). Set `APP_BASE_URL` and `CORS_ORIGINS` to the staging URL.
-2. Attach a persistent disk and point `EMPIRE_DB_FILE` at it (SQLite on a network
-   ephemeral filesystem is lost on redeploy).
-3. Configure the platform's scheduled job to call `POST /api/internal/cleanup`
-   hourly with the `x-cleanup-token` header, or leave the 24h inactivity cleanup to
-   the in-process hourly sweep.
-4. Keep `ALLOW_DEV_EMAIL_PREVIEW` unset in staging. Provide real SMTP credentials to
-   send verification/reset email.
-5. `robots` noindex is included in `web/index.html` so search engines don't index
-   the staging URL.
+- **Exactly one application instance.** The database is SQLite on a **persistent
+  local volume**; the app must never run multiple independently-writable replicas
+  or scale horizontally. SQLite + WAL + `busy_timeout` (5s) handle single-process
+  concurrency; scale-out would require a real database server (out of scope).
+- **Node version:** `node:sqlite` is used via `process.getBuiltinModule`; it is
+  available without flags on Node ≥ 23.4 and is verified working on Node 22–25
+  (this project was built and tested on Node 25.9).
+- **Migrations** run automatically at boot (`server/migrations/0001_init.sql`,
+  tracked in `_migrations`), idempotently — safe across restarts/redeploys.
+- **Backups:** stop-or-copy: `sqlite3 data/empire.db ".backup
+  '/backups/empire-YYYYMMDD.db'"` while running (WAL allows online backup), or
+  plain `cp` while the service is stopped. Restore = replace the file and restart.
+  On Fly, enable volume snapshots (first 10 GB free).
+- **Restart/redeploy:** state is entirely in the DB file; verified that accounts,
+  friendships, results and history survive a process restart (cookies stay valid).
+  In-flight rounds simply resume; speakers may need to re-tap (lease TTL 3 min).
+- **HTTPS/origin:** the server serves both `dist/` and the API on **one origin**,
+  so cookies are first-party. Set `trust proxy` is enabled; behind a TLS-terminating
+  proxy the app auto-detects `x-forwarded-proto` and marks cookies `Secure`. Set
+  `APP_BASE_URL`/`CORS_ORIGINS` to the real deployed URL.
+- **Cleanup:** the hourly in-process sweep always runs; the external
+  `POST /api/internal/cleanup` exists for platform CRON and is **disabled (404)
+  unless `CLEANUP_TOKEN` is set** and matched (verified by test).
 
-Current blocker: no staging host, no SMTP account — nothing was purchased. See
-`docs/build-progress.md` for the honest handoff state.
+**Verified hosting costs (checked 2026-11-01; do not provision without approval):**
+
+- **Fly.io:** no free tier for new organizations. Cheapest workable staging:
+  `shared-cpu-1x` 256 MB machine **$2.19/mo** + 1 GB volume **$0.15/mo** + egress
+  $0.02/GB → **≈ $2.35–2.50/mo**. Free trial covers ~2 h of runtime.
+- **Render:** a free web-service tier exists, but free services have **no persistent
+  disk** (disks are $0.25/GB/mo and require paid compute, cheapest $7/mo) → the
+  SQLite file would be erased on each deploy. Persistent staging on Render means
+  **≈ $7.25+/mo**.
+- **Email:** Brevo/Twilio SendGrid free transactional tiers (100–300 emails/day)
+  suffice for verification/reset volume; effectively **$0/mo**.
+
+Any staging deploy needs these decisions/credentials: domain or provider subdomain
+(`*.fly.dev`/`*.onrender.com` are free, no purchase), SMTP account, and DB volume
+attachment. Nothing has been purchased.

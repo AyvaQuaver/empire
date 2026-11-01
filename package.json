@@ -7,7 +7,7 @@
     "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "tsx watch server/src/index.ts",
     "dev:web": "vite",
-    "build": "tsc --noEmit -p server && tsc --noEmit -p web/tsconfig.json && vite build",
+    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json && vite build",
     "typecheck": "npm run build --ignore-scripts",
     "server": "tsx server/src/index.ts",
     "test": "vitest run",

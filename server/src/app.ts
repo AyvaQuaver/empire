@@ -31,8 +31,18 @@ export function createApp(overrides?: { dbFile?: string; port?: number }): AppHa
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "same-origin");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    // Room/snapshot/reading responses contain private, session-scoped data:
+    // never cache them in browsers, proxies, or service workers.
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Robots-Tag", "noindex");
     if (config.isProduction) {
       res.setHeader("Strict-Transport-Security", "max-age=15552000");
+      if (!config.sessionSecret || config.sessionSecret === "dev-only-change-me") {
+        console.error("[empire] CONFIG PROBLEM: SESSION_SECRET is not set. Password hashes use no pepper until it is set.");
+      }
+      if (!config.smtp.host) {
+        console.error("[empire] CONFIG PROBLEM: SMTP is not configured. Email verification and password reset are unavailable until SMTP_HOST, SMTP_USER, SMTP_PASSWORD and EMAIL_FROM are set.");
+      }
     }
     next();
   });

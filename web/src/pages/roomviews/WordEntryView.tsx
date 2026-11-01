@@ -155,8 +155,9 @@ export function WordEntryView({ snap, error, act }: { snap: RoomSnapshot; error:
           </p>
           {!support.supported && (
             <p className="error-text" role="alert">
-              <span aria-hidden="true">⚠</span> This device can't speak out loud. Use a phone or computer with
-              text-to-speech, and read the words out loud yourself.
+              <span aria-hidden="true">⚠</span> This device can't speak out loud. Have someone use a phone or computer
+              that can — their device reads all three readings aloud so everyone plays together. No words are ever
+              displayed on screen.
             </p>
           )}
           {support.supported && (

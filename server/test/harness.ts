@@ -16,12 +16,14 @@ export async function startTestServer(): Promise<TestContext> {
   };
 }
 
-export interface JoinResponse {
-  room?: { code: string };
-  reconnected?: boolean;
+/** A cookie-managed test client standing in for one browser session. */
+export interface ClientResponse {
+  status: number;
+  json: any;
+  cookie: string;
+  headers: { cacheControl: string | null; xRobotsTag: string | null; setCookieCount: number };
 }
 
-/** A cookie-managed test client standing in for one browser session. */
 export class Client {
   cookie = "";
   constructor(readonly base: string) {}
@@ -32,7 +34,7 @@ export class Client {
     body?: unknown,
     extraHeaders: Record<string, string> = {},
     includeCookie = true,
-  ): Promise<{ status: number; json: any; cookie: string }> {
+  ): Promise<ClientResponse> {
     const res = await fetch(`${this.base}${path}`, {
       method,
       headers: {
@@ -64,23 +66,32 @@ export class Client {
     } catch {
       json = null;
     }
-    return { status: res.status, json, cookie: this.cookie.slice(0, 20) + "…" };
+    return {
+      status: res.status,
+      json,
+      cookie: this.cookie.slice(0, 20) + "…",
+      headers: {
+        cacheControl: res.headers.get("cache-control"),
+        xRobotsTag: res.headers.get("x-robots-tag"),
+        setCookieCount: typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie().length : 0,
+      },
+    };
   }
 
-  get<T = any>(path: string, extra?: Record<string, string>): Promise<{ status: number; json: T; cookie: string }> {
+  get(path: string, extra?: Record<string, string>): Promise<ClientResponse> {
     return this.request("GET", path, undefined, extra) as any;
   }
-  post<T = any>(path: string, body?: unknown, extra?: Record<string, string>): Promise<{ status: number; json: T; cookie: string }> {
+  post(path: string, body?: unknown, extra?: Record<string, string>): Promise<ClientResponse> {
     return this.request("POST", path, body, extra) as any;
   }
-  put<T = any>(path: string, body?: unknown): Promise<{ status: number; json: T; cookie: string }> {
+  put(path: string, body?: unknown): Promise<ClientResponse> {
     return this.request("PUT", path, body) as any;
   }
-  patch<T = any>(path: string, body?: unknown): Promise<{ status: number; json: T; cookie: string }> {
+  patch(path: string, body?: unknown): Promise<ClientResponse> {
     return this.request("PATCH", path, body) as any;
   }
-  del<T = any>(path: string): Promise<{ status: number; json: T; cookie: string }> {
-    return this.request("DELETE", path) as any;
+  del(path: string, body?: unknown): Promise<ClientResponse> {
+    return this.request("DELETE", path, body) as any;
   }
 }
 
@@ -91,7 +102,9 @@ export async function createRoomBy(c: Client, displayName: string, genre = "Anim
 }
 
 export async function joinByCode(c: Client, code: string, displayName: string) {
-  return c.post<JoinResponse>("/api/rooms/join", { code, displayName });
+  return c.post("/api/rooms/join", { code, displayName }) as Promise<
+    { status: number; json: { room?: { code: string }; reconnected?: boolean }; cookie: string; headers: Record<string, unknown> }
+  >;
 }
 
 export const expectOk = (status: number, json: any, label = "") => {

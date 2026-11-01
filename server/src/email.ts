@@ -12,17 +12,32 @@ export interface QueuedEmail {
 }
 
 export async function deliverEmail(db: DB, mail: QueuedEmail): Promise<void> {
-  const now = Date.now();
-  const inserted = db
-    .prepare("INSERT INTO email_outbox (to_email, subject, body, created_at) VALUES (?, ?, ?, ?)")
-    .run(mail.to, mail.subject, mail.body, now);
-
   if (!config.smtp.host) {
+    // In production/staging, missing SMTP is a configuration problem, not fake
+    // success: callers turn this into a clear user-facing failure or a silent,
+    // identical "if that account exists" reset response as appropriate.
+    if (config.isProduction) {
+      throw new Error(
+        "SMTP is not configured: set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD and EMAIL_FROM. Email cannot be delivered.",
+      );
+    }
+    // Development only: the outbox table is a local fixture, readable via the
+    // dev-only, local-machine preview endpoint (ALLOW_DEV_EMAIL_PREVIEW=true).
+    db.prepare("INSERT INTO email_outbox (to_email, subject, body, created_at) VALUES (?, ?, ?, ?)").run(
+      mail.to,
+      mail.subject,
+      mail.body,
+      Date.now(),
+    );
     console.log(
       `[email:outbox] to=${mail.to} subject="${mail.subject}" (SMTP not configured; stored locally, dev preview only)`,
     );
     return;
   }
+  const now = Date.now();
+  const inserted = db
+    .prepare("INSERT INTO email_outbox (to_email, subject, body, created_at) VALUES (?, ?, ?, ?)")
+    .run(mail.to, mail.subject, mail.body, now);
   try {
     const nodemailer = await import("nodemailer");
     const transport = nodemailer.createTransport({

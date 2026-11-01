@@ -222,11 +222,18 @@ export function signOutSession(db: DB, sessionId: string): void {
   });
 }
 
-// Safe account deletion: requires the session to be signed in AND reauthentication.
-// User rows and social bindings are removed; shared game history keeps non-secret
-// participation records with the winner's display name (names are not account data).
-export function deleteAccount(db: DB, sessionId: string): void {
+// Safe account deletion: requires the signed-in session AND password
+// re-authentication (a hijacked session can't destroy an account silently).
+// User rows and social bindings are removed; shared game history keeps
+// non-secret participation records with the winner's display name.
+export async function deleteAccount(db: DB, sessionId: string, password: string): Promise<void> {
   const user = requireUser(db, sessionId);
+  const row = db
+    .prepare("SELECT password_hash FROM users WHERE id = ?")
+    .get(user.id) as { password_hash: string } | undefined;
+  if (row && !(await verifyPassword(password, row.password_hash))) {
+    throw new AppError(ERR.INVALID_CREDENTIALS, 401, "That password isn't right.");
+  }
   withTx(db, () => {
     const uid = user.id;
     // Unbind player memberships so historical entries survive with display names only.

@@ -121,9 +121,11 @@ export function buildRouter(db: DB): Router {
     }
   });
 
-  router.delete("/auth/account", (req, res, next) => {
+  router.delete("/auth/account", async (req, res, next) => {
     try {
-      authService.deleteAccount(db, sessionIdOf(req));
+      // Password re-authentication: the signed-in session alone can't delete an account.
+      const password = String(req.body?.password ?? "");
+      await authService.deleteAccount(db, sessionIdOf(req), password);
       clearSessionCookie(res, req);
       res.json({ ok: true });
     } catch (err) {

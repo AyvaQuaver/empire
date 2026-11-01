@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
-import { Button, ErrorBanner, Panel } from "../components/ui";
+import { Button, ErrorBanner, Field, Input, Panel } from "../components/ui";
 import { Page, useSession } from "../App";
 import { SignOutButton } from "./AuthPages";
 
@@ -145,17 +145,7 @@ export function ProfilePage() {
               Your username, email and password are removed. Old game results already recorded keep player display
               names, but they stop being linked to you. Friends and requests are deleted. This can't be undone.
             </p>
-            <Button
-              className="btn-primary"
-              onClick={() =>
-                void api
-                  .del("/api/auth/account")
-                  .then(() => (window.location.href = "/"))
-                  .catch(() => undefined)
-              }
-            >
-              Delete permanently
-            </Button>
+            <DeleteAccountForm onDone={() => (window.location.href = "/")} />
             <Button className="btn-ghost" onClick={() => setDeleteOpen(false)}>
               Back
             </Button>
@@ -163,5 +153,45 @@ export function ProfilePage() {
         </div>
       )}
     </Page>
+  );
+}
+
+/** Password re-authentication before the destructive account delete call. */
+export function DeleteAccountForm({ onDone }: { onDone: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <form
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (busy) return;
+        setBusy(true);
+        setError(null);
+        api
+          .del("/api/auth/account", { password })
+          .then(onDone)
+          .catch((err) => {
+            setError(err instanceof ApiError ? err.message : "Could not delete the account. Try again.");
+            setBusy(false);
+          });
+      }}
+    >
+      <Field label="Your password" hint="Confirm your password to delete the account.">
+        <Input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
+          required
+          aria-label="Your password"
+        />
+      </Field>
+      <ErrorBanner error={error} />
+      <Button type="submit" className="btn-primary" loading={busy}>
+        Delete permanently
+      </Button>
+    </form>
   );
 }

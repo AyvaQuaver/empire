@@ -20,6 +20,7 @@ const EMPTY_STATUS: RunStatus = { phase: "idle", readingNumber: null, wordIndex:
 export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: string | null; act: Act }) {
   const support = useMemo(speechSupport, []);
   const [leaseToken, setLeaseToken] = useState<string | null>(null);
+  const leaseRef = useRef<string | null>(null);
   const [words, setWords] = useState<string[] | null>(null);
   const [status, setStatus] = useState<RunStatus>(EMPTY_STATUS);
   const [busy, setBusy] = useState(false);
@@ -47,6 +48,20 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
   const mine = snap.reading?.mine ?? false;
   const held = snap.reading?.held ?? false;
 
+  // One tap total: the organiser's "Start readings" moves us here; this device
+  // is the lease holder, so start announcing automatically — but ONLY for a
+  // fresh reading position. A refresh mid-reading keeps going manually so the
+  // audio never restarts unexpectedly.
+  const autoStartRef = useRef(false);
+  const beTheSpeakerRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  useEffect(() => {
+    if (autoStartRef.current) return;
+    if (!snap.reading || !snap.reading.mine || snap.reading.position > 0) return;
+    if (!support.supported) return;
+    autoStartRef.current = true;
+    void beTheSpeakerRef.current();
+  }, [snap.reading?.mine, snap.reading?.position, support.supported]);
+
   const wrap = act;
 
   const fetchWords = async (token: string, readingNumber: number): Promise<string[]> => {
@@ -63,10 +78,13 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
     try {
       const out = await api.post<{ leaseToken: string }>(`/api/rounds/${snap.round.id}/lease`, { action: "acquire" });
       setLeaseToken(out.leaseToken);
-      setWords(await fetchWords(out.leaseToken, snap.reading?.readingNumber ?? 1));
+      leaseRef.current = out.leaseToken;
+      const loaded = await fetchWords(out.leaseToken, snap.reading?.readingNumber ?? 1);
+      setWords(loaded);
+      // One tap from here: all three readings run, then the starter is announced.
+      await runReadings(snap.reading?.readingNumber ?? 1, loaded);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not become the speaker.");
-    } finally {
       setBusy(false);
     }
   };
@@ -78,33 +96,60 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
         force: true,
       });
       setLeaseToken(out.leaseToken);
-      setWords(await fetchWords(out.leaseToken, snap.reading?.readingNumber ?? 1));
+      leaseRef.current = out.leaseToken;
+      const loaded = await fetchWords(out.leaseToken, snap.reading?.readingNumber ?? 1);
+      setWords(loaded);
+      await runReadings(snap.reading?.readingNumber ?? 1, loaded);
     })();
 
-  const beginReading = async () => {
+  const ackFor = (readingNumber: number) => async (index: number) => {
+    await api.post(`/api/rounds/${snap.round.id}/reading/ack`, {
+      leaseToken: leaseRef.current,
+      readingNumber,
+      position: index + 1,
+    });
+  };
+
+  const completeFor = (readingNumber: number) => async () => {
+    await api.post(`/api/rounds/${snap.round.id}/reading/complete`, {
+      leaseToken: leaseRef.current,
+      readingNumber,
+    });
+  };
+
+  /* The normal flow is ONE tap: the reader announces "Reading N", speaks every
+   * word of the saved order, then continues straight into the next saved
+   * reading (fetching its word-only list with the leased header) until all
+   * three are done and the round moves to play. Stopping or failure ends the
+   * chain — recovery (restart the current reading, move devices) is manual,
+   * and nothing regenerates the shuffles or the starter. */
+  const runReadings = async (startReadingNumber: number, firstWords: string[]) => {
     const runner = runnerRef.current;
-    if (!words || !leaseToken || !runner) return;
-    setBusy(true);
+    if (!runner || !leaseRef.current) {
+      setBusy(false);
+      return;
+    }
     setActionError(null);
     try {
-      const result = await runner.run(currentReading, words, {
-        isCurrent: () => true,
-        onWordComplete: async (index) => {
-          await api.post(`/api/rounds/${snap.round.id}/reading/ack`, {
-            leaseToken,
-            readingNumber: currentReading,
-            position: index + 1,
-          });
-        },
-        onReadingComplete: async () => {
-          await api.post(`/api/rounds/${snap.round.id}/reading/complete`, {
-            leaseToken,
-            readingNumber: currentReading,
-          });
-        },
-      });
-      if (result === "done" || result === "failed") await wrap(async () => undefined)();
+      let readingNumber = startReadingNumber;
+      let list = firstWords;
+      for (;;) {
+        const result = await runner.run(readingNumber, list, {
+          isCurrent: () => true,
+          onWordComplete: ackFor(readingNumber),
+          onReadingComplete: completeFor(readingNumber),
+        });
+        // "cancelled" (paused) or "failed": stop the chain. Recovery is manual
+        // and never regenerates the shuffled orders or the starter.
+        if (result !== "done" || readingNumber >= 3) break;
+        const next = readingNumber + 1;
+        list = await fetchWords(leaseRef.current, next);
+        readingNumber = next;
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "The words couldn't be announced.");
     } finally {
+      await wrap(async () => undefined)().catch(() => undefined); // refresh state
       setBusy(false);
     }
   };
@@ -115,9 +160,13 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
         `/api/rooms/${snap.room.code}/reading/restart`,
         { readingNumber: currentReading, leaseToken },
       );
-      if (out.leaseToken) setLeaseToken(out.leaseToken);
+      if (out.leaseToken) {
+        setLeaseToken(out.leaseToken);
+        leaseRef.current = out.leaseToken;
+      }
       setWords(out.words);
     })();
+  beTheSpeakerRef.current = beTheSpeaker;
 
   const paused = runnerRef.current?.running === false && status.phase !== "done" && readingStarted && words !== null && !busy;
   void paused;
@@ -127,8 +176,9 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
       <Page>
         <h1 style={{ fontSize: 28 }}>Listen closely</h1>
         <p className="error-text" role="alert">
-          <span aria-hidden="true">⚠</span> This browser can't speak out loud. The organiser should read the words from
-          their device, which has sound. You can close this screen — listening status stays in sync.
+          <span aria-hidden="true">⚠</span> This browser can't speak out loud. Wait for the organiser — or another
+          player with a working browser — to take the speaker role; that device announces every word out loud. No words
+          will be shown here or on any screen.
         </p>
         <ListeningPanel snap={snap} currentReading={currentReading} />
       </Page>
@@ -172,16 +222,17 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
         <Panel heading="Speaker">
           {mine ? (
             <>
-              <p className="status-text">This device is the speaker. Load the shuffled words here.</p>
+              <p className="status-text">This device is the speaker: it will read all three saved readings aloud, then announce the starter.</p>
               <Button className="btn-primary btn-cta" loading={busy} onClick={() => void beTheSpeaker()}>
-                Continue reading on this device
+                Continue as speaker
               </Button>
             </>
           ) : held ? (
             <>
               <p className="status-text">Another speaker device is active.</p>
               <p className="status-text">
-                Taking over stops that device's lease — the person there may need to start again.
+                Taking over stops that device's audio and lease — the person there may see the run pause. The saved
+                readings continue in the same order on this device.
               </p>
               <Button className="btn-primary btn-cta" onClick={takeover}>
                 Take over as speaker
@@ -218,9 +269,13 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
             total={words.length}
           />
           {(phase === "idle" || phase === "done") && (
-            <Button className="btn-primary btn-cta" loading={busy} onClick={() => void beginReading()}>
-              {phase === "idle" && readingStarted ? "Restart this reading" : "Begin this reading"}
-              {phase === "done" ? " / next reading" : ""}
+            <Button
+              className="btn-primary btn-cta"
+              loading={busy}
+              onClick={() => void runReadings(currentReading, words as string[])}
+            >
+              {phase === "idle" && readingStarted ? "Restart readings" : "Start readings"}
+              {phase === "done" ? " (next one)" : ""}
             </Button>
           )}
           {(phase === "speaking" || phase === "pausing" || phase === "announcing") && (
@@ -235,20 +290,21 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
           )}
           {phase === "failed" && (
             <>
-              <ErrorBanner error="Speaking stopped unexpectedly. Restart this reading from its saved order?" />
+              <ErrorBanner error="Speaking stopped unexpectedly. The saved order is safe — restart to repeat it, or move to another speaker device." />
               <Button
                 className="btn-primary btn-cta"
                 onClick={() => {
                   setRestartWarn(true);
                 }}
               >
-                Restart this reading
+                Restart this reading (same saved order)
               </Button>
             </>
           )}
           <p className="status-text">
-            If speech fails repeatedly, say each word aloud yourself. The saved order on this device is the official
-            one for this reading.
+            If this device can't speak, tap "Test sound" first; then take the speaker role on another device — that
+            stops the audio here and the readings continue there in the same saved order. No words are ever shown or
+            shared on any screen.
           </p>
         </Panel>
       )}
