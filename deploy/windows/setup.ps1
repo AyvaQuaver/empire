@@ -79,3 +79,10 @@ $settings = New-ScheduledTaskSettingsSet `
 $principal = New-ScheduledTaskPrincipal -UserId 'LOCAL SERVICE' -LogonType ServiceAccount -RunLevel Limited
 Register-ScheduledTask -TaskName $Task -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 Write-Output "setup: task $Task registered as LOCAL SERVICE (boot autostart; crash recovery by task restart, 16 retries/1min)"
+
+# 5. Re-apply the writable-directory grants LAST: the broad /T root grant above
+#    leaves my own sub-folder writes intact, but a later setup for the other
+#    instance would re-walk the tree; a common helper keeps this idempotent.
+if(Test-Path "$Root\repo\deploy\windows\grant-acls.ps1"){
+  & powershell -NoProfile -ExecutionPolicy Bypass -File "$Root\repo\deploy\windows\grant-acls.ps1"
+}
