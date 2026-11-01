@@ -18,7 +18,7 @@ foreach($d in "$Root\repo","$Root\releases","$Root\shared\logs","$Root\data\$Ins
 }
 icacls $Root /T /C /grant:r 'Administrators:(OI)(CI)F' /grant:r 'SYSTEM:(OI)(CI)F' /grant:r 'NT AUTHORITY\LOCAL SERVICE:(OI)(CI)RX' | Out-Null
 foreach($w in "$Root\shared\logs","$Root\data\$Instance","$Root\backups\$Instance"){
-  icacls $w /inheritance:r /grant 'Administrators:F' /grant 'NT AUTHORITY\LOCAL SERVICE:F' /grant 'SYSTEM:F' | Out-Null
+  icacls $w /inheritance:r /T /C /grant 'Administrators:(OI)(CI)F' /grant 'NT AUTHORITY\LOCAL SERVICE:(OI)(CI)M' /grant 'SYSTEM:(OI)(CI)F' | Out-Null
 }
 
 # 2. Local clone (read-only remote) on the deployment branch

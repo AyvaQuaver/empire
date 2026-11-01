@@ -24,5 +24,5 @@ while($true){
   Start-Sleep -Seconds 5
   # re-read the release pointer so a deploy can replace the running version without stopping the task
   $next=(Get-Content $releaseFile -Raw).Trim()
-  if($next -ne $release){ $release=$next; $app=Join-Path "$root\releases" $release; Set-Location $app; Write-Output "empire:$Instance switched to release $next" }
+  if($next -ne $release){ $release=$next; $app=Join-Path (Join-Path $root "releases\$Instance") $release; Set-Location $app; Write-Output "empire:$Instance switched to release $next" }
 }
