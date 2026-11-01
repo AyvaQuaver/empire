@@ -8,9 +8,19 @@ $release=(Get-Content $releaseFile -Raw).Trim()
 if($release -notmatch '^[a-f0-9]{40}$'){throw 'Invalid release identifier'}
 $app=Join-Path "$root\releases" $release
 if(-not (Test-Path $app)){throw "Release $release does not exist on disk"}
+$port = if($Instance -eq 'staging'){ 8892 } else { 8891 }
 Set-Location $app
 $ErrorActionPreference='Continue'  # benign node:sqlite startup warnings on Windows console
-$port = if($Instance -eq 'staging'){ 8892 } else { 8891 }
 Write-Output "empire:$Instance starting release $release on 127.0.0.1:$port"
-& 'C:\Collectz\tools\node\node.exe' --env-file="C:/Empire/shared/$Instance.env" node_modules\tsx\dist\cli.mjs server\src\index.ts >> "$root\shared\logs\$Instance.log" 2>&1
-exit $LASTEXITCODE
+
+# Supervised loop (equivalent of systemd Restart=always): relaunch ~5s after any
+# crash; Stop-ScheduledTask terminates the loop and children as a job object.
+while($true){
+  & 'C:\Collectz\tools\node\node.exe' --env-file="C:/Empire/shared/$Instance.env" node_modules\tsx\dist\cli.mjs server\src\index.ts >> "$root\shared\logs\$Instance.log" 2>&1
+  $code=$LASTEXITCODE
+  Write-Output "empire:$Instance process exited code=$code at $(Get-Date -Format o); restart in 5s"
+  Start-Sleep -Seconds 5
+  # re-read the release pointer so a deploy can replace the running version without stopping the task
+  $next=(Get-Content $releaseFile -Raw).Trim()
+  if($next -ne $release){ $release=$next; $app=Join-Path "$root\releases" $release; Set-Location $app; Write-Output "empire:$Instance switched to release $next" }
+}
