@@ -17,7 +17,6 @@ if(-not $Ref){
   git -C $Repo fetch origin codex/deploy-playempire 2>$null | Out-Null
   $Ref = 'origin/codex/deploy-playempire'
 }
-BEGIN=$_.MyInvocation.MyCommand.Path
 Write-Output "empire:deploy instance=$Instance ref=$Ref"
 
 & git -C $Repo fetch origin $Ref.Split('/')[-1]
