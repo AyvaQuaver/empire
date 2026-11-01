@@ -84,7 +84,7 @@ live pause/resume round.
 
 ## Temp shared URL (2026-11-01) — REHOSTED after measured diagnosis
 
-**Current URL: https://urls-excited-heater-thee.trycloudflare.com** (Cloudflare free
+**Current URL: https://focus-outcome-verification-removing.trycloudflare.com** (Cloudflare free
 "quick tunnel" to a locally run single-instance server; `EMPIRE_ENV=staging` +
 `AUTH_ACCOUNTS_ENABLED=false` + stable random secret; SQLite file `./data/empire.db`
 on this machine).
@@ -115,6 +115,17 @@ Remaining tunnel limits: quick-tunnel subdomains are ephemeral (regenerated on
 restart; re-run the commands in the repo docs to get a new URL), and the login/
 signup flows still need real SMTP credentials before accounts can be enabled.
 
+
+2026-11-01 preview check (commit 373d6b9, no code changes): tunnel restarted
+(quick tunnels rotate subdomains), server restarted with the new `APP_BASE_URL`
+(same DB file + same `SESSION_SECRET`; `EMPIRE_ENV=staging`,
+`AUTH_ACCOUNTS_ENABLED=false` kept). Verified: `/`, `/api/health`,
+`/api/capabilities` and the 265 KB JS bundle all 200 in 0.2–0.35 s full-size; a
+browser-created room's lobby QR decoded (jsQR, in-page) to this host's `/join/…`
+link; opening it lands directly on the name-entry screen with a single
+"Join game" button and no room-code field; a scripted independent session
+resolved the same invitation and rejoined without duplicates. Capture:
+`docs/screenshots/invite-preview-375.png`.
 
 To run the same demo locally/on any machine:
 
