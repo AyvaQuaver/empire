@@ -110,7 +110,8 @@ describe("EMPIRE_ENV resolution", () => {
 
   it("staging guest-preview boots WITHOUT SMTP spawned process", async () => {
     const entry = path.resolve("server/src/index.ts");
-    const dbFile = path.join("/tmp/opencode", `preview-${Date.now()}.db`);
+    const dbFile = path.join(".tmp-data", `preview-${Date.now()}.db`);
+    fs.mkdirSync(path.dirname(dbFile), { recursive: true });
     const child = spawnTsx([entry], {
       env: {
         ...process.env,
@@ -126,6 +127,7 @@ describe("EMPIRE_ENV resolution", () => {
     });
     let stdout = "";
     child.stdout?.on("data", (d) => (stdout += String(d)));
+    // wait for the "API listening" line — that's the acceptance signal
     const listening = await new Promise<boolean>((resolve) => {
       child.stdout?.on("data", (d: NodeJS.ErrnoException) => {
         if (String(d).includes("API listening")) resolve(true);
@@ -136,11 +138,22 @@ describe("EMPIRE_ENV resolution", () => {
       });
       setTimeout(() => resolve(false), 15000);
     });
+    // let the process close its DB handles before removing the files (Windows locks)
+    const exited = new Promise<void>((resolve) => child.on("exit", () => resolve()));
+    const window = Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
     child.kill();
-    fs.rmSync(dbFile, { force: true });
-    fs.rmSync(`${dbFile}-journal`, { force: true });
-    fs.rmSync(`${dbFile}-wal`, { force: true });
-    fs.rmSync(`${dbFile}-shm`, { force: true });
+    await window;
+    const rmQuiet = (p: string) => {
+      try {
+        fs.rmSync(p, { force: true });
+      } catch {
+        // Windows may hold the path momentarily — harmless test residue
+      }
+    };
+    rmQuiet(dbFile);
+    rmQuiet(`${dbFile}-journal`);
+    rmQuiet(`${dbFile}-wal`);
+    rmQuiet(`${dbFile}-shm`);
     expect(listening).toBe(true);
     expect(stdout).toContain("API listening");
   }, 45000);

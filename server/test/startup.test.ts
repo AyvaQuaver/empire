@@ -143,10 +143,23 @@ describe("existing accounts keep authenticating across restarts (same configured
       cOld.cookie = firstCookie;
       expect((await cOld.get("/api/me")).json.signedIn).toBe(true);
     } finally {
-      fs.rmSync(dbFile, { force: true });
-      fs.rmSync(`${dbFile}-journal`, { force: true });
-      fs.rmSync(`${dbFile}-wal`, { force: true });
-      fs.rmSync(`${dbFile}-shm`, { force: true });
+      // Windows keeps the pending DatabaseSync handle open: close it before
+      // deleting, and treat cleanup failures (in-flight locks) as best effort.
+      if (handle) {
+        await handle.close();
+        handle = null;
+      }
+      const rmQuiet = (p: string) => {
+        try {
+          fs.rmSync(p, { force: true });
+        } catch {
+          // locked directory entry: harmless test residue
+        }
+      };
+      rmQuiet(dbFile);
+      rmQuiet(`${dbFile}-journal`);
+      rmQuiet(`${dbFile}-wal`);
+      rmQuiet(`${dbFile}-shm`);
     }
   });
 });
