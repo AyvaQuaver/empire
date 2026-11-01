@@ -2,23 +2,39 @@
 
 Date: 2026-11-01 · branch: `codex/empire-mvp` (repo: github.com/AyvaQuaver/empire)
 
-## Temp shared URL (2026-11-01)
+## Temp shared URL (2026-11-01) — REHOSTED after measured diagnosis
 
-A **temporary** public URL is available for review, now in explicit **guest-preview**
-mode: `https://cb01ea7eaf3ea2.lhr.life` — a localhost.run SSH tunnel (`127.0.0.1`
-forwarding — plain `localhost` mixed ::1/IPv4 resolution caused intermittent 502s
-before) to a locally run single-instance server (`EMPIRE_ENV=staging` +
-`AUTH_ACCOUNTS_ENABLED=false` + stable random secret; SQLite file
-`./data/empire.db` on this machine). Responses are gzip-compressed (~3× smaller).
+**Current URL: https://urls-excited-heater-thee.trycloudflare.com** (Cloudflare free
+"quick tunnel" to a locally run single-instance server; `EMPIRE_ENV=staging` +
+`AUTH_ACCOUNTS_ENABLED=false` + stable random secret; SQLite file `./data/empire.db`
+on this machine).
 
-Verified over this URL: home shows "Guest preview — accounts are not available yet."
-(Sign in CTA hidden); `POST /api/auth/*`, friends and invites → **403 server-side**
-with the preview message; `GET /api/dev/outbox` → **404** (route removed);
-`GET /api/capabilities` exposes only the safe flag; `Cache-Control: no-store` +
-`X-Robots-Tag: noindex` intact; guest lobby/QR/invite link work. A full guest
-multiplayer smoke test passed earlier on the tunnel (create → joins → duplicate-word
-conflict (neutral) → readings → winner → guest stats via session identity), and
-snapshots never contained other players' words.
+**Why it moved (measured):** with localhost.run, the two small endpoints were fine
+(650–900 ms TTFB), but the 80 KB JS bundle was **truncated mid-transfer (77,773 B /
+65,501 B vs 80,989 B) and stalled up to 30 s on repeated attempts** — the browser
+then sat on a blank page forever. The app itself was never the bottleneck (local
+baselines: HTML 1–2 ms, JS 6 ms). Diagnosis: free SSH tunnel bandwidth stalling.
+Through the Cloudflare quick tunnel the same endpoints measure **0.19–0.35 s total,
+full size every time**. Two guardrails were added regardless:
+
+- An inline asset watchdog in `index.html`: if the bundle hasn't mounted after 12 s,
+  the page shows "The app files did not finish loading…" with a **Try again** button
+  instead of a silent blank screen.
+- The session bootstrap (`App.tsx`) aborts stalled `/api/capabilities`/`/api/me`
+  fetches after 10 s and shows a retryable "Reconnecting…" screen with a Try again
+  button (never an endless loading state).
+
+Also verified in fresh browser sessions (repeat loads, zero console errors): home
+loads, guest-preview notice replaces Sign in, create → lobby with QR works joined
+via code by two external sessions, lock/word entry, and a **one-tap automatic
+reading run was driven to the starter announcement with zero further
+interactions and no self-recorded result** (network capture shows no `/result`
+call; result recording remains an explicit organiser action).
+
+Remaining tunnel limits: quick-tunnel subdomains are ephemeral (regenerated on
+restart; re-run the commands in the repo docs to get a new URL), and the login/
+signup flows still need real SMTP credentials before accounts can be enabled.
+
 
 To run the same demo locally/on any machine:
 

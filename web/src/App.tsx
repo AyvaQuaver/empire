@@ -47,6 +47,7 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
     loading: boolean;
     accountsEnabled: boolean | null;
     accountsNotice: string | null;
+    loadError: string | null;
   }>({
     signedIn: false,
     username: null,
@@ -54,17 +55,27 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
     loading: true,
     accountsEnabled: null,
     accountsNotice: null,
+    loadError: null,
   });
 
   const refresh = useCallback(async () => {
+    setState((s) => ({ ...s, loading: true, loadError: null }));
+    // Networks/tunnels can hang mid-request; give up after 10 s and offer Retry
+    // instead of an endless loading screen.
+    const fetchWithTimeout = async <T,>(path: string): Promise<T> => {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Request timed out.")), 10000),
+      );
+      return Promise.race([api.get<T>(path), timeout]);
+    };
     try {
       // Capabilities first: the server says whether accounts are available
       // (guest preview). No configuration or secrets are exposed.
-      const caps = await api
-        .get<{ accountsEnabled: boolean | null; accountsNotice: string | null }>("/api/capabilities")
-        .catch(() => ({ accountsEnabled: null as boolean | null, accountsNotice: null as string | null }));
+      const caps = await fetchWithTimeout<{ accountsEnabled: boolean | null; accountsNotice: string | null }>(
+        "/api/capabilities",
+      ).catch(() => ({ accountsEnabled: null as boolean | null, accountsNotice: null as string | null }));
       localStorage.setItem("empire.accounts", caps.accountsEnabled === false ? "false" : "true");
-      const me = await api.get<MeResponse>("/api/me");
+      const me = await fetchWithTimeout<MeResponse>("/api/me");
       setState({
         signedIn: me.signedIn,
         username: me.user?.username ?? null,
@@ -72,9 +83,14 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
         loading: false,
         accountsEnabled: caps.accountsEnabled,
         accountsNotice: caps.accountsNotice,
+        loadError: null,
       });
     } catch {
-      setState((s) => ({ ...s, loading: false }));
+      setState((s) => ({
+        ...s,
+        loading: false,
+        loadError: "The app couldn't reach its server. Check the connection and try again.",
+      }));
     }
   }, []);
 
@@ -89,6 +105,24 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Retryable error screen: never leave the user on a blank/endless loading app
+  // when the server can't be reached (e.g. during tunnel/network troubles).
+  if (state.loading && state.loadError) {
+    return (
+      <main className="page">
+        <div className="page-content">
+          <h1 style={{ fontSize: 26 }}>Reconnecting…</h1>
+          <p className="error-text" role="alert">
+            <span aria-hidden="true">⚠</span> {state.loadError}
+          </p>
+          <button className="btn btn-primary btn-cta" onClick={() => void refresh()}>
+            Try again
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return <SessionContext.Provider value={{ ...state, refresh, signOut }}>{children}</SessionContext.Provider>;
 }

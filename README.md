@@ -149,6 +149,8 @@ Rules enforced by code and tests:
 - **Restart/redeploy:** everything persists (accounts, friendships, results,
   history — verified against a real process restart). In-flight readings resume;
   speakers re-tap "Start readings (saved order)" if their lease expired (TTL 3 min).
+- The SPA also refuses to show an endless blank/loading screen: a 12 s asset
+  watchdog and a 10 s session bootstrap timeout surface retryable errors.
 - **HTTPS/cookies:** same origin for site + API; cookies are `HttpOnly`,
   `SameSite=Lax`, and become `Secure` automatically behind a TLS-terminating proxy
   (`x-forwarded-proto`, `trust proxy` = 1). Set `APP_BASE_URL`/`CORS_ORIGINS` to the

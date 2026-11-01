@@ -201,7 +201,7 @@ describe("deployed email handling", () => {
   it("the dev outbox fixture only accepts explicit preview mode (development)", async () => {
     beforeOutbox(); // set up cleared counters
     const db = t.handle.db;
-    expect(
+    await expect(
       deliverEmailWithConfig(
         db,
         { to: "a@b.test", subject: "S", body: "B" },
