@@ -1,6 +1,20 @@
 # Empire — build progress
 
-Date: 2026-11-01 · branch: `codex/empire-mvp` (local repo; no remote configured)
+Date: 2026-11-01 · branch: `codex/empire-mvp` (repo: github.com/AyvaQuaver/empire)
+
+## Temp shared URL (2026-11-01)
+
+A **temporary** public URL is available for review:
+`https://6e0f01ed0aab0c.lhr.life` — a localhost.run SSH tunnel to a locally run
+single-instance server (`npm run build` output served by Express; SQLite file
+`./data/empire.db` on this machine). Verified end-to-end over the public URL:
+room create/join/lock/private words/snapshot privacy (stranger sees nothing, own
+word only), lease-gated word-only reading payload, results + history. Runs in
+`EMPIRE_ENV=development`-equivalent mode because no SMTP credentials exist yet
+(nothing purchased): guest play is fully functional; register/verification/reset
+emails can't be delivered. The URL lives only while this machine's tunnel stays
+up — it is not a cloud deployment and SQLite + account data are local.
+
 
 ## 00. Second review round (2026-11-01)
 

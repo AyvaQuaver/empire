@@ -5,6 +5,8 @@ write secret words on their phones, three shuffled read-outs are spoken aloud by
 speaker device, and the table plays the physical guessing round. The app never
 reveals anyone's word — not even to the organiser or to the server's own clients.
 
+Repo: https://github.com/AyvaQuaver/empire (join on the `codex/empire-mvp` branch; open a PR from it).
+
 ## Feature summary
 
 - Rooms of 3–20 players, joinable by code, link or QR. No account needed to play.
