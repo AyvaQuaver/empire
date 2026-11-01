@@ -17,7 +17,7 @@ if($RestoreVerify){
   $NodeScript=@'
 import { DatabaseSync } from 'node:sqlite';
 import { openSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
-const src = process.argv[1];
+const src = process.argv[2];
 const tmp = 'C:/Empire/backups/.verify-' + Date.now();
 mkdirSync(tmp, { recursive: true });
 const json = readFileSync(src);
@@ -49,8 +49,8 @@ $Stage=Join-Path $BackupDir ".stage-$Stamp"
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 $NodeScript=@'
 import { DatabaseSync } from 'node:sqlite';
-const db = new DatabaseSync(process.argv[1]);
-db.exec(`VACUUM INTO '${process.argv[2].replace(/'/g, "''")}'`);
+const db = new DatabaseSync(process.argv[2]);
+db.exec(`VACUUM INTO '${process.argv[3].replace(/'/g, "''")}'`);
 db.close();
 console.log('snapshot ok');
 '@
@@ -73,7 +73,7 @@ try {
   New-Item -ItemType Directory -Force -Path $tmpv | Out-Null
   $verify=@'
 import { DatabaseSync } from 'node:sqlite';
-const db = new DatabaseSync(process.argv[1], { readOnly: true });
+const db = new DatabaseSync(process.argv[2], { readOnly: true });
 const ok = db.exec('PRAGMA integrity_check;').flat()[0] === 'ok';
 process.exit(ok ? 0 : 2);
 '@
