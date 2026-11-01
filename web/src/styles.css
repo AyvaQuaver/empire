@@ -449,3 +449,32 @@ input[type="text"].code-input {
   border-top: 2px solid var(--lavender-soft);
   margin: var(--space-2) 0;
 }
+
+/* ---- Genre suggestion chips (explicitly suggestions, not a fixed list) ---- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 2px solid var(--lavender);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chip-selected {
+  background: var(--lavender);
+  border-color: var(--lavender);
+}
+
+/* comfortable touch targets on phones, including safe areas */
+.page {
+  padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  padding-left: calc(16px + env(safe-area-inset-left, 0px));
+  padding-right: calc(16px + env(safe-area-inset-right, 0px));
+}

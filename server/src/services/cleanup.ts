@@ -56,6 +56,9 @@ function purgeLeftoverSecrets(db: DB): void {
     `DELETE FROM private_reading_sequences WHERE round_id IN (
        SELECT id FROM rounds WHERE state IN ('finished','cancelled','expired'))`,
   ).run();
+  // Temporary winning-word reveals expire 24h after result creation: enforce on
+  // reads too, but sweep overdue rows here as part of retention.
+  db.prepare("DELETE FROM result_reveals WHERE expires_at <= ?").run(Date.now());
 }
 
 export function markExpiredAsDone(db: DB): void {

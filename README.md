@@ -4,24 +4,51 @@ Empire is a mobile-first companion app for the in-person family word game: playe
 write secret words on their phones, three shuffled read-outs are spoken aloud by one
 speaker device, and the table plays the physical guessing round. The app never
 reveals anyone's word — not even to the organiser or to the server's own clients.
+(The single temporary exception is the winning word, shown to that round's
+participants after the organiser records and confirms the result; see "Winning-word
+reveal and retention" below.)
 
 Repo: https://github.com/AyvaQuaver/empire (join on the `codex/empire-mvp` branch; open a PR from it).
 
 ## Feature summary
 
-- Rooms of 3–20 players, joinable by code, link or QR. No account needed to play.
+- Rooms of 3–20 players, joinable by code or by link/QR. A valid invitation link
+  resolves automatically — the recipient sees room name, genre and their display
+  name with a single "Join game" button; the manual code field remains only on the
+  "Join with a code" route. No account needed to play.
 - Roster lock before word collection; the organiser may remove players only before
   readings begin.
 - Private word submissions (duplicate words rejected case-insensitively with a
   neutral message and no loss of your previous word).
+- Genre is a free-text field with tappable suggestion chips (Animals, Films, Food,
+  Famous people); selecting a chip fills the editable field and clears when edited.
 - Three independently shuffled, server-generated word-only reading lists plus a
   uniformly random starter announced after the third reading.
 - A fenced speaker lease: exactly one device holds the words; organiser takeover is
   explicit; restarts repeat the saved order.
-- Browser text-to-speech with pacing and a stall watchdog, a "Test sound" button and
+- In-session pause/resume is application-managed at utterance boundaries: Pause
+  finishes the current word/announcement and parks at the exact cursor; Resume
+  continues with the next unspoken word (no repeats or skips). "Restart this
+  reading" repeats only the current reading in its saved shuffle after an explicit
+  tap. Lease loss still goes through the existing recovery flow; a refresh cannot
+  claim exact mid-word recovery.
+- Voice & accent selection on the speaker device: on the organiser's ready-to-read
+  screen (alongside Test sound) and the speaker view. Device-local voice lists
+  (async population tolerated, English voices prioritised), a remembered preference
+  validated against the current device, a "Test voice" sample that is never a
+  secret word and never overlaps playback, and changes locked during playback.
+- Browser text-to-speech with pacing and a stall watchdog, "Test sound" and
   no autoplay.
+- A quiet one-tap automatic reading run: one tap after the words are collected runs
+  all three readings and the starter announcement with no further interaction;
+  pause/resume are the only interventions besides error recovery.
 - Organiser-reported results with correction (one row per round, audit trail).
-- "Play another round" keeps the group and creates a fresh round with fresh secrets.
+- Winning-word reveal: before confirmation the organiser is told the round's
+  winner's word will be shown to that round's participants. Saving captures only
+  the winner's word into a temporary, access-controlled reveal record and deletes
+  all private submissions (detailed in the privacy section).
+- "Play another round" keeps the group and creates a fresh round with fresh secrets
+  (and deletes the temporary reveal).
 - Optional accounts (register/verify/sign-in/reset, no email enumeration), guests can
   upgrade in place without losing their history, account deletion anonymises.
 - Friends with exact-username search (never emails), crossed-request collapsing and
@@ -32,8 +59,28 @@ Repo: https://github.com/AyvaQuaver/empire (join on the `codex/empire-mvp` branc
 Words live in private tables and are released only to the lease-holding speaker
 device as a word-only list with no owner metadata. Room snapshots contain readiness
 status and your own word only. No words, submissions, or shuffles ever appear in
-URLs, localStorage, or logs. See `docs/permissions-matrix.md` for the full matrix and
-retention rules.
+URLs, localStorage, or logs.
+
+### Winning-word reveal and retention
+
+- Recording a result requires the organiser to confirm (the dialog explains that
+  saving reveals the winner's word and deletes everyone's words) and, in one
+  transaction, the server copies the selected winner's submitted word into a
+  separate temporary `result_reveals` record, saves the result, and purges the
+  round's private submissions and reading sequences. Duplicate save requests are
+  idempotent.
+- Only authenticated members of that round may retrieve `/rounds/:id/reveal`
+  (`no-store`, audit-checked; friendship alone is not enough); reads enforce expiry
+  in addition to the scheduled sweep.
+- The reveal is deleted when the next round starts, the room is cancelled, or 24
+  hours pass — whichever happens first. Permanent history keeps winner, genre, date
+  and participation, never the winning word.
+- After a winner correction the previous word is removed from the reveal (the
+  original submissions are gone, so the server cannot restore a corrected winner's
+  original word; only the corrected winner themselves may enter a replacement on
+  their own device, tied to the current result version).
+
+See `docs/permissions-matrix.md` for the full matrix.
 
 ## Development
 
@@ -42,7 +89,7 @@ Requirements: Node 22+ (built against Node 25; uses the built-in `node:sqlite`).
 ```bash
 npm install
 npm run dev        # API on :8787 + Vite on :5173 (proxy configured) — run in two terminals: npm run dev:server & npm run dev
-npm test           # vitest: API + privacy + speech suites (27 tests)
+npm test           # vitest: API + privacy + speech + voice-adapter suites (79 tests)
 npm run build      # typechecks implied above; emits dist/ the server serves in production
 npm run cleanup    # one-off retention sweep (also runs hourly in-process)
 ```

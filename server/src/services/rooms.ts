@@ -462,9 +462,11 @@ export function cancelRoom(db: DB, sessionId: string, room: RoomRow): void {
         round.id,
       );
     }
-    // Words and reading lists are deleted on cancellation (retention policy).
+    // Words, reading lists and the winning-word reveal are deleted on
+    // cancellation (retention policy).
     db.prepare("DELETE FROM private_submissions WHERE round_id = ?").run(round?.id ?? "");
     db.prepare("DELETE FROM private_reading_sequences WHERE round_id = ?").run(round?.id ?? "");
+    db.prepare("DELETE FROM result_reveals WHERE round_id IN (SELECT id FROM rounds WHERE room_id = ?)").run(room.id);
     touchRoom(db, room.id);
   });
 }
@@ -493,6 +495,8 @@ export function startNextRound(db: DB, sessionId: string, room: RoomRow): RoundR
       "lobby_open",
     );
     db.prepare("DELETE FROM next_round_roster WHERE room_id = ?").run(room.id);
+    // The previous round's winning-word reveal is temporary: next round purges it.
+    db.prepare("DELETE FROM result_reveals WHERE round_id = ?").run(lastRound.id);
     for (const pid of participantIds) {
       const p = playerById(db, pid);
       if (p && p.status === "active") {

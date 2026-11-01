@@ -2,6 +2,86 @@
 
 Date: 2026-11-01 · branch: `codex/empire-mvp` (repo: github.com/AyvaQuaver/empire)
 
+## 0000. Mobile-first UX round (2026-11-01) — latest work
+
+Implemented the agreed 9-part mobile-UX product change set (this section), all
+tested locally. 14 test files / 79 passing; `tsc` (both projects), `eslint`, and
+the production build are clean. Full 4-player, independent-session browser flow
+run end-to-end (scripted sessions via the API + one real browser device as
+organiser/speaker), including record-winner, reveal access checks, and a separate
+live pause/resume round.
+
+1. **Link/QR joining without a code field** (`web/src/pages/JoinPage.tsx`,
+   `server/src/api.ts`, `server/src/services/rooms.ts`):
+   `/join/:token` resolves server-side first — valid invitations show room name +
+   genre + display name + "Join game" (no code input, no flash of the code form);
+   invalid/expired/full/locked invitations get specific friendly messages with an
+   "Enter a room code instead" offer for invalid links; opening the link again
+   recognises existing membership without duplicates. The room code field remains
+   only on the manual route. New tests: `server/test/joinflow.test.ts`.
+2. **Voice & accent on the ready-to-read screen** (`web/src/components/VoicePanel.tsx`
+   new, used by `WordEntryView.tsx` + `ReadingView.tsx`, adapter in
+   `web/src/lib/speech.ts`): Voice & accent selector + "Test voice" sit next to
+   Test sound on the organiser/speaker's ready screen and on the speaker view;
+   device-local lists (async population tolerated via `voiceschanged` + a bounded
+   poll), English voices prioritised, remembered voices validated against the
+   current device (`localStorage["empire.voice"]`, removed when gone), one selected
+   voice used for announcements and words, changes disabled during playback,
+   samples are neutral and never overlap game playback, unsupported browsers get
+   clear guidance. New adapter tests: `server/test/voiceadapter.test.ts`.
+   Bugs fixed while verifying in the real browser: an option passed its display
+   label instead of the voice URI (selection silently fell back), and the voice
+   refresh listener recursed (`RangeError: Maximum call stack size exceeded`) —
+   both fixed and covered by the adapter tests + a live UI check (191 device
+   voices listed, English first, Daniel→Samantha change persisted).
+3. **Genre suggestions** (`web/src/pages/CreatePage.tsx`, `styles.css`): Label
+   "Genre", helper "Choose a suggestion or enter your own", editable field with
+   tappable chips (Animals, Films, Food, Famous people). Selecting fills the field
+   and marks the chip selected (`aria-pressed`); editing clears the selection;
+   server validation/length limits unchanged. Verified live in both directions.
+4. **Pause / resume / restart this reading** (`web/src/pages/ReadingView.tsx`,
+   `web/src/lib/speech.ts`): application-managed pause at utterance boundaries
+   (never `speechSynthesis.pause()`); distinct `speaking → pause-requested →
+   paused → completed/failed` states; Resume continues at the exact next word
+   (no repeats or skips — covered by 7 runner tests incl. pause during the
+   announcement, during a word, at boundaries and rapid taps); "Restart this
+   reading" repeats only the current saved shuffle after an explicit tap; the
+   lease is renewed while paused. Live check confirmed: pause parks the UI
+   (`Paused`, position preserved), Resume advances to "Word 1 of 4", other
+   devices receive a word-free status snapshot only.
+5. **Winner screen redesign** (`web/src/pages/roomviews/ResultView.tsx`,
+   `styles.css`): crown + restrained confetti, "Robin takes the crown!",
+   "THE WINNING WORD WAS · Meerkat", "Animals · 4 players", "Recorded by Finn ·
+   organiser-reported", primary "Play again", secondary "How it works", small
+   organiser-only "Correct winner". Neutral copy; reduced-motion supported.
+6. **Winning-word reveal** (`server/migrations/0004_result_reveal.sql`,
+   `server/src/services/results.ts`, `server/src/api.ts`,
+   `web/src/pages/roomviews/ResultView.tsx`, `server/src/services/cleanup.ts`):
+   confirmation dialog warns that saving reveals the winner's word and deletes
+   everyone's words; one transaction captures the winner's word into
+   `result_reveals` and purges private submissions/sequences; duplicate saves are
+   idempotent; reads are members-of-that-round only (verified live: participant
+   200, outsider 403) with `no-store` + `noindex`; deleted on next round, cancel
+   or 24h (both sweep and read-time enforcement); correction removes the previous
+   reveal and only the corrected winner can submit a replacement tied to the
+   result version. New tests: `server/test/reveal.test.ts`.
+7. **Mobile layout checks** (`web/src/pages/*`): 320/375/390/430 captures re-taken
+   with the current build (`docs/screenshots/create-genre-320/375.png`,
+   `join-link-320/375/390/430.png`, `mobile-320-home.png`,
+   `ready-voice-375.png`, `playing-starter-375.png`, `reading-paused-375.png`,
+   `result-celebration-375.png`) using the committed `web/public/viewport.html`
+   harness. No horizontal overflow at any width; chips wrap; touch targets are
+   large pills; forms stay reachable with the keyboard open.
+8. **Notes / honest limits**
+   - Real-device testing is still NOT done (browser emulation only).
+   - The invitation URL baked into snapshots continues to honor `APP_BASE_URL`;
+     the local instance still advertises the stale `urls-excited-heater-…`
+     tunnel host, so re-run the tunnel + restart the server with a fresh
+     `APP_BASE_URL` before sharing a demo link again.
+   - Round 2 of the live check ended with the round cancelled by the organiser
+     mid-pause (intentional); the single console error seen was the expected 403
+     lease-revocation ack after that cancel.
+
 ## Temp shared URL (2026-11-01) — REHOSTED after measured diagnosis
 
 **Current URL: https://urls-excited-heater-thee.trycloudflare.com** (Cloudflare free

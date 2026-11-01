@@ -474,8 +474,30 @@ export function buildRouter(db: DB): Router {
     }
   });
 
-  router.post("/rooms/:code/cancel-round", (req, res, next) => {
+  // -- winning-word reveal (temporary, round participants only) -----------
+  router.get("/rounds/:id/reveal", (req, res, next) => {
     try {
+      const round = requireRound(db, String(req.params.id));
+      const room = roomsService.getRoomById(db, round.room_id) as roomsService.RoomRow;
+      const reveal = resultsService.resultRevealFor(db, room, sessionIdOf(req));
+      res.json({ reveal });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/rounds/:id/reveal-word", (req, res, next) => {
+    try {
+      const round = requireRound(db, String(req.params.id));
+      const room = roomsService.getRoomById(db, round.room_id) as roomsService.RoomRow;
+      resultsService.submitRevealWord(db, room, sessionIdOf(req), String(req.body?.word ?? ""));
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/rooms/:code/cancel-round", (req, res, next) => {    try {
       const room = roomByParam(req);
       roundsService.cancelRound(db, sessionIdOf(req), room);
       res.json({ ok: true });
