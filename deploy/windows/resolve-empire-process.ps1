@@ -35,7 +35,10 @@ if(-not (Test-Path $ReleasePathRoot)){ throw "release path missing: $ReleasePath
 
 function BadMark([string]$cl){
   if($null -eq $cl){ return $true }
-  if($cl -imatch 'Collectz'){ return $true }
+  # Only flag real Collectz app markers (its server entrypoint or its own env file).
+  # The shared node.exe binary under C:\Collectz\tools\node is Empire's runtime too.
+  if($clFlat -and $clFlat -like '*Collectz/shared/*'){ return $true }
+  if($clFlat -imatch 'src/server\.js'){ return $true }
   $clFlat = ($cl -replace '"','') -replace "'",""
   if($clFlat -like ('*' + '--env-file=C:/Empire/shared/' + $OtherInstance + '.env*')){ return $true }
   return $false
