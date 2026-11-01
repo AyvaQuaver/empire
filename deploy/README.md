@@ -154,6 +154,16 @@ before deploying.
 
 ## 7. Backups
 
+(Linux notes below apply only to the Linux kit. On the deployed **Windows**
+server the live policy is documented in
+[deploy/windows/README.md](deploy/windows/README.md) §Backups: separate
+`C:\Empire\backups\<instance>` destinations, 14 daily snapshots, SYSTEM-only
+permissions, scheduled tasks `EmpireBackupStaging` (03:17 daily) and
+`EmpireBackupProduction` (03:47 daily) with `StartWhenAvailable`, a
+`last-status.json` failure indicator, and an isolated restore verification
+(`-RestoreVerify`). Same-server backups do not protect against total server
+loss.)
+
 ```bash
 sudo -u empire bash /srv/empire/repo/deploy/backup.sh production          # snapshot now
 sudo -u empire bash /srv/empire/repo/deploy/backup.sh production \

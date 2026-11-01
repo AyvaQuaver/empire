@@ -40,6 +40,8 @@ console.log(`[backup] restore copy verified (integrity ok, ${tables} tables)`);
 
 if(-not (Test-Path $DbFile)){ throw "missing $DbFile" }
 New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
+# Backups may contain account/session data: SYSTEM + Administrators only, and
+# inherited removal keeps the application identity (LOCAL SERVICE) out.
 & icacls $BackupDir /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null
 
 $Stamp=(Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
@@ -60,8 +62,36 @@ $Out=Join-Path $BackupDir "empire-$Instance-$Stamp.db"
 Copy-Item "$Stage\empire.db" $Out
 Remove-Item $Stage -Recurse -Force
 
-# retention: keep the newest 8 snapshots
+# retention: keep the newest 14 daily snapshots
 Get-ChildItem $BackupDir -Filter 'empire-*.db' | Sort-Object LastWriteTime -Descending |
-  Select-Object -Skip 8 | ForEach-Object { Remove-Item $_.FullName -Force }
+  Select-Object -Skip 14 | ForEach-Object { Remove-Item $_.FullName -Force }
 
-Write-Output "[backup] wrote $Out (kept 8 newest; NOTE: same-server copies do not protect against server loss)"
+# detectable end state: a small machine-readable status file + timestamped line
+$Restored=$null
+try {
+  $tmpv=Join-Path $BackupDir ".verify-$([guid]::NewGuid().ToString('N'))"
+  New-Item -ItemType Directory -Force -Path $tmpv | Out-Null
+  $verify=@'
+import { DatabaseSync } from 'node:sqlite';
+const db = new DatabaseSync(process.argv[1], { readOnly: true });
+const ok = db.exec('PRAGMA integrity_check;').flat()[0] === 'ok';
+process.exit(ok ? 0 : 2);
+'@
+  $tmpJs=Join-Path $tmpv '.check.mjs'
+  $verify | Set-Content -Path $tmpJs -Encoding UTF8
+  & $Node $tmpJs $Out
+  $Restored=($LASTEXITCODE -eq 0)
+  Remove-Item $tmpv -Recurse -Force
+} catch { $Restored=$false }
+
+$status=[ordered]@{
+  instance = $Instance
+  file = $Out
+  stamp = (Get-Date).ToUniversalTime().ToString('o')
+  retentionDays = 14
+  integrityOk = [bool]$Restored
+  result = $(if($Restored){ 'success' } else { 'FAILED' })
+}
+($status | ConvertTo-Json -Compress) | Set-Content -Path (Join-Path $BackupDir 'last-status.json') -Encoding ASCII
+Write-Output "[backup] wrote $Out"
+if($Restored){ Write-Output '[backup] integrity check: ok' } else { Write-Output '[backup] integrity check FAILED'; exit 1 }

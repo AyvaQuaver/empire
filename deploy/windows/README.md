@@ -8,6 +8,35 @@ node-based backups). Nothing under `C:\Collectz` is modified except the shared
 `Caddyfile`, which gains three appended site blocks (validated + hot-reloaded
 through Caddy's admin API — no other application is disrupted).
 
+## Process-targeting safeguard (incident disclosed + fixed)
+
+During initialisation an ad-hoc diagnostic command stopped processes by a broad
+match on `production.env` — a substring the unrelated **Collectz** app also
+uses (`C:\Collectz\shared\production.env`). **Collectz stopped briefly and was
+restarted from its own scheduled task within the same minute** (verified
+healthy immediately afterwards; its service/config was never touched).
+
+Preventive fix (in this kit):
+- The deployment kit contains **no broad process operations** (`deploy.ps1`,
+  `setup.ps1`, `run-app.ps1`, `backup.ps1` use scheduled-task actions or none
+  at all).
+- The single component allowed to touch processes,
+  `deploy/windows/resolve-empire-process.ps1`, requires ALL of the following
+  before any action:
+  1. process image is `node.exe`;
+  2. the command line names the **exact per-instance env file**
+     (`--env-file=C:/Empire/shared/<instance>.env`);
+  3. the command line is rooted in **this instance's current release path**
+     (`C:\Empire\releases\<instance>\<sha>` verified against
+     `active-release-<instance>.txt` — stale PIDs are never trusted);
+  4. nothing in the command line references `Collectz` or the other
+     instance's env file;
+  5. the port owner (8891/8892) is verified as the same identity before
+     restart/kill.
+- Its **default mode is a dry run**; `-Restart`/`-KillE` require
+  `-ConfirmStop` and use scheduler-scoped actions (process tree of the task's
+  own job object).
+
 An earlier Linux-oriented kit (systemd + nginx) is kept in the repository for
 reference but does **not** apply to this server.
 

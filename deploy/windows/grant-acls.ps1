@@ -10,11 +10,18 @@ foreach($d in 'C:\Empire\data\staging','C:\Empire\data\production'){
     Write-Output "granted Modify: $d"
   }
 }
-Write-Output '== logs + backups =='
-foreach($d in 'C:\Empire\shared\logs','C:\Empire\backups\staging','C:\Empire\backups\production'){
+Write-Output '== logs + extra dirs =='
+foreach($d in 'C:\Empire\shared\logs'){
   if(Test-Path $d){
     icacls $d /T /C /grant:r 'Administrators:(OI)(CI)F' /grant:r 'SYSTEM:(OI)(CI)F' /grant:r 'NT AUTHORITY\LOCAL SERVICE:(OI)(CI)M' | Out-Null
     Write-Output "granted Modify: $d"
+  }
+}
+Write-Output '== backups: restrict (may contain account/session data) =='
+foreach($d in 'C:\Empire\backups\staging','C:\Empire\backups\production'){
+  if(Test-Path $d){
+    icacls $d /T /C /inheritance:r /grant:r 'Administrators:(OI)(CI)F' /grant:r 'SYSTEM:(OI)(CI)F' | Out-Null
+    Write-Output "restricted: $d"
   }
 }
 Write-Output '== env files readable (never writable by the app) =='
