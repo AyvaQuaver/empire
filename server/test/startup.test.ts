@@ -1,10 +1,9 @@
 import { describe, it, expect, afterAll, afterAll as _afterAll } from "vitest";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { validateDeploymentConfig, type DeploymentEnv } from "../src/config.js";
 import { createApp, type AppHandle } from "../src/app.js";
-import { Client } from "./harness.js";
+import { Client, spawnTsx } from "./harness.js";
 
 /* Startup configuration: staging/production refuse to start without real
  * secrets and SMTP; the dev outbox can never leak into deployed environments. */
@@ -69,7 +68,7 @@ describe("deployment configuration validation", () => {
 
   it("the staging server really refuses to boot without a secret (spawned process)", async () => {
     const entry = path.resolve("server/src/index.ts");
-    const child = spawn("node_modules/.bin/tsx", [entry], {
+    const child = spawnTsx([entry], {
       env: {
         ...process.env,
         EMPIRE_ENV: "staging",

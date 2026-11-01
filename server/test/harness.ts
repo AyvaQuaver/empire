@@ -1,4 +1,16 @@
 import { createApp, type AppHandle } from "../src/app.js";
+import { spawn, type ChildProcess } from "node:child_process";
+import path from "node:path";
+import { createRequire } from "node:module";
+
+const require_ = createRequire(import.meta.url);
+
+/** Portable tsx spawn: goes through node + the resolved CLI entry, so it works
+ * on Windows too (npm's POSIX-style node_modules/.bin shims do not exist there). */
+export function spawnTsx(args: string[], opts: Parameters<typeof spawn>[2]): ChildProcess {
+  const cli = path.join(path.dirname(require_.resolve("tsx/package.json")), "dist", "cli.mjs");
+  return spawn(process.execPath, [cli, ...args], opts);
+}
 
 export interface TestContext {
   handle: AppHandle;

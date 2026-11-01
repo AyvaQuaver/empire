@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveDeploymentEnv, validateDeploymentConfig } from "../src/config.js";
 import { setEmailTransportForTests, deliverEmailWithConfig } from "../src/email.js";
-import { startTestServer, type TestContext } from "./harness.js";
+import { startTestServer, spawnTsx, type TestContext } from "./harness.js";
 
 let t: TestContext;
 beforeAll(async () => {
@@ -88,7 +87,7 @@ describe("EMPIRE_ENV resolution", () => {
 
   it("a misspelled environment really refuses to boot (spawned process)", async () => {
     const entry = path.resolve("server/src/index.ts");
-    const child = spawn("node_modules/.bin/tsx", [entry], {
+    const child = spawnTsx([entry], {
       env: {
         ...process.env,
         EMPIRE_ENV: "stagng",
@@ -112,7 +111,7 @@ describe("EMPIRE_ENV resolution", () => {
   it("staging guest-preview boots WITHOUT SMTP spawned process", async () => {
     const entry = path.resolve("server/src/index.ts");
     const dbFile = path.join("/tmp/opencode", `preview-${Date.now()}.db`);
-    const child = spawn("node_modules/.bin/tsx", [entry], {
+    const child = spawnTsx([entry], {
       env: {
         ...process.env,
         EMPIRE_ENV: "staging",
