@@ -11,6 +11,8 @@ param(
 $ErrorActionPreference='Stop'
 $Repo='C:\Empire\repo'
 $Root='C:\Empire'
+# npm/npx live beside the existing node install; they are not on the session PATH
+$env:PATH = 'C:\Collectz\tools\node;' + $env:PATH
 $Port = if($Instance -eq 'staging'){ 8892 } else { 8891 }
 $Task = if($Instance -eq 'staging'){ 'EmpireStaging' } else { 'EmpireProduction' }
 if(-not $Ref){
