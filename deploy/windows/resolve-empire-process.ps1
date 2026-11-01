@@ -1,17 +1,20 @@
 # Instance-scoped process targeting and lifecycle for Empire on Windows.
-# DEFAULT IS DRY-RUN: no Stop-P process unless -ConfirmStop is passed.
+# DEFAULT IS DRY-RUN: no stop/kill unless -ConfirmStop is passed.
 #
-#   powershell resolve-empire-process.ps1 -Instance staging                    # dry run
-#   powershell resolve-empire-process.ps1 -Instance staging -Restart           # task restart via scheduler
-#   powershell resolve-empire-process.ps1 -Instance production -KillE app      # hard-kill app process (crash simulation)
+#   powershell resolve-empire-process.ps1 -Instance staging                     # dry run
+#   powershell resolve-empire-process.ps1 -Instance staging -Restart -ConfirmStop
+#   powershell resolve-empire-process.ps1 -Instance production -KillE -ConfirmStop
 #
-# Identity rules (ALL must hold for a candidate; anything else is excluded):
-#   1. process is node.exe
-#   2. command line contains the EXACT instance env file: --env-file=C:/Empire/shared/<instance>.env
-#   3. command line contains the tsx loader rooted at THIS instance's current release path
-#      (C:\Empire\releases\<instance>\<current-sha>\...) - verified against active-release-<instance>.txt
-#   4. command line contains NO reference to C:\Collectz or to the OTHER instance's env file
-# A mismatch of any rule means the script ABORTS WITHOUT ACTION.
+# Identity rules (ALL candidates must satisfy; anything else is excluded):
+#   1. process image is node.exe
+#   2A. wrapper: command line contains the exact per-instance env flag
+#       (--env-file="C:/Empire/shared/<instance>.env", quotes tolerated)
+#   2B. child: command line is rooted in THIS instance's current release path
+#       (C:\Empire\releases\<instance>\<current-sha>\... verified against the
+#       pointer file; stale PIDs are never trusted)
+#   3. nothing in the command line references Collectz or the other instance
+#   4. port owner (8891/8892) is verified as one of the selected list before
+#       any action; the helper aborts without action otherwise
 param(
   [Parameter(Mandatory=$true)][ValidateSet('staging','production')] [string]$Instance,
   [switch]$Restart,
@@ -22,56 +25,56 @@ $ErrorActionPreference='Stop'
 $Root='C:\Empire'
 $Port = if($Instance -eq 'staging'){ 8892 } else { 8891 }
 $Task = if($Instance -eq 'staging'){ 'EmpireStaging' } else { 'EmpireProduction' }
-$OtherPort = if($Instance -eq 'staging'){ 8891 } else { 8892 }
-$EnvFilePattern = "--env-file=C:/Empire/shared/$Instance.env"
+$OtherInstance = if($Instance -eq 'staging'){ 'production' } else { 'staging' }
+$EnvFileFlag = '--env-file="?C:/Empire/shared/' + $Instance + '.env'
 $ReleaseSha = (Get-Content "$Root\shared\active-release-$Instance.txt" -Raw).Trim()
-$ReleasePath = "$Root\releases\$Instance\$ReleaseSha"
+$ReleasePathRoot = "$Root\releases\$Instance\$ReleaseSha"
 
 Write-Output "target: instance=$Instance task=$Task port=$Port releaseSha=$ReleaseSha"
-
 if($ReleaseSha -notmatch '^[a-f0-9]{40}$'){ throw 'invalid release pointer' }
-if(-not (Test-Path $ReleasePath)){ throw "release path missing: $ReleasePath" }
+if(-not (Test-Path $ReleasePathRoot)){ throw "release path missing: $ReleasePathRoot" }
 
-function Is-EmpireInstance([System.Management.Automation.PSObject] $proc, [string] $inst){
-  $cl = $proc.CommandLine
-  if($null -eq $cl){ return $false }
-  if($cl -notmatch [regex]::Escape('--env-file=C:/Empire/shared/' + $inst + '.env')){ return $false }
-  # rooted in THIS instance's release path (child processes carry the release dir)
-  if($cl -notlike "*$Root\releases\$inst\*"){ return $false }
-  # never Collectz or the other instance
-  if($cl -imatch 'Collectz'){ return $false }
-  return $true
+function BadMark([string]$cl){
+  if($null -eq $cl){ return $true }
+  if($cl -imatch 'Collectz'){ return $true }
+  if($cl -imatch ("--env-file=.?C:/Empire/shared/" + $OtherInstance + ".env")){ return $true }
+  return $false
 }
 
-$candidates = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { Is-EmpireInstance $_ $Instance }
-Write-Output "matched $($candidates.Count) process(es) for instance=$Instance"
-
-$portOwner = Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -eq $Port } | Select-Object -First 1
+$nodes = Get-CimInstance Win32_Process -Filter "Name='node.exe'"
+$wrappers = @($nodes | Where-Object {
+  $cl = $_.CommandLine
+  ($cl -imatch [regex]::Escape($EnvFileFlag)) -and (-not (BadMark $cl))
+})
+$wrapperIds = @($wrappers | ForEach-Object { $_.ProcessId })
+$children = @($nodes | Where-Object {
+  ($wrapperIds -contains $_.ParentProcessId) -and
+  ($_.CommandLine -like "*$ReleasePathRoot*") -and
+  (-not (BadMark $_.CommandLine))
+})
+$all = @($wrappers) + @($children)
+$portOwner = (Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -eq $Port } | Select-Object -First 1).OwningProcess
+Write-Output "selected $($all.Count) process(es): wrappers=$($wrappers.Count) children=$($children.Count)"
+foreach($p in $all){
+  Write-Output ("-- pid=$($p.ProcessId) parent=$($p.ParentProcessId) cmd: " + $p.CommandLine.Substring(0, [Math]::Min(160, $p.CommandLine.Length)))
+}
 if($portOwner){
-  $owning = Get-CimInstance Win32_Process -Filter "ProcessId=$($portOwner.OwningProcess)"
-  if(-not (Is-EmpireInstance $owning $Instance)){ throw "port $Port is owned by a process that does not belong to empire/$Instance - aborting" }
-  Write-Output ("port listener: pid=$($owning.ProcessId) verified as empire/$Instance")
+  if(($all | Where-Object { $_.ProcessId -eq $portOwner }).Count -eq 0){
+    $owning = Get-CimInstance Win32_Process -Filter "ProcessId=$portOwner"
+    throw ("port $Port is owned by pid $portOwner which does not match empire/$Instance rules - aborting. cmd: " + $owning.CommandLine)
+  }
+  Write-Output "port listener pid=$portOwner verified as empire/$Instance"
 } else {
-  Write-Output "port listener: none (instance likely stopped)"
+  Write-Output 'port listener: none (instance likely stopped)'
 }
-
-# cross-check: the OTHER instance must not be selected
-$other = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { Is-EmpireInstance $_ ($Instance -replace 'staging','production' -replace 'production','staging') }
-Write-Output "other-instance processes: $($other.Count) (excluded from targeting)"
-
-foreach($p in $candidates){
-  Write-Output ("-- candidate pid=$($p.ProcessId) parent=$($p.ParentProcessId)")
-  Write-Output ("   cmd: " + $p.CommandLine.Substring(0, [Math]::Min(180, $p.CommandLine.Length)))
-}
-
-$total = $candidates.Count
-if($total -eq 0 -and -not $portOwner){ throw "no empire/$Instance process nor port listener found - nothing to act on" }
+$otherCount = @($nodes | Where-Object {
+  $cl = $_.CommandLine
+  (($cl -imatch [regex]::Escape('--env-file="C:/Empire/shared/' + $OtherInstance + '.env'))) -and (-not (BadMark $cl))
+}).Count
+Write-Output "other-instance processes (excluded): $otherCount"
 
 if($Restart){
-  if(-not $ConfirmStop){
-    Write-Output 'DRY RUN: would run Stop-ScheduledTask; Start-ScheduledTask (kills only this task instance, then the scheduler-owned loop restarts the app). Pass -ConfirmStop to execute.'
-    exit 0
-  }
+  if(-not $ConfirmStop){ Write-Output 'DRY RUN: restart would run Stop-ScheduledTask + Start-ScheduledTask (scheduler job-object only). Pass -ConfirmStop to execute.'; exit 0 }
   Stop-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 3
   Start-ScheduledTask -TaskName $Task
@@ -79,14 +82,11 @@ if($Restart){
   throw "restart healthcheck FAILED after 30s"
 }
 
-if($KillE -and $candidates.Count -gt 0){
-  if(-not $ConfirmStop){
-    Write-Output 'DRY RUN: would hard-kill these pids (crash simulation); the supervised loop recovers them. Pass -ConfirmStop to execute.'
-    exit 0
-  }
-  foreach($p in $candidates){ Stop-Process -Id $p.ProcessId -Force }
-  Write-Output "hard-killed $($candidates.Count) process(es) (task recovers them)"
+if($KillE -and $all.Count -gt 0){
+  if(-not $ConfirmStop){ Write-Output 'DRY RUN: would hard-kill the listed pids (crash simulation; supervised loop recovers). Pass -ConfirmStop to execute.'; exit 0 }
+  foreach($p in $children){ Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+  foreach($p in $wrappers){ Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+  Write-Output "hard-killed $($children.Count) child / $($wrappers.Count) wrapper process(es)"
   exit 0
 }
-
-Write-Output 'dry run complete (no changes made). Use -Restart or -KillE with -ConfirmStop to act.'
+Write-Output 'dry run complete (no changes). Use -Restart or -KillE with -ConfirmStop to act.'
