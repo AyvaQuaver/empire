@@ -79,7 +79,21 @@ pre-deploy `backup.ps1` snapshot when a migration changed the schema.
    persists; result-reveal retention behaves.
 4. `data\empire.db` survives `Stop-ScheduledTask`/`Start-ScheduledTask`.
 
+**Verified state (2026-11-01):** all of the above checks passed for both
+instances over the public URLs — staging (`staging.playempire.uk`) and
+production (`playempire.uk`, plus `www` → 308 redirect). Guest amounts,
+three-reading chain → starter announcement, result recording with the temporary
+winning-word reveal (member access ✓, outsider 403 ✓, purged by next round ✓),
+`no-store`, `/api/dev/outbox` 404, share link + QR decoded with jsQR to the
+apex/staging hostnames, invite links land directly on name entry, node and task
+hard-kill → auto-recovery (~3 s via the supervised loop), and SQLite data
+persisting across restarts. See the final report for the deployed SHAs.
+
 ## After verified production
 
 Retire the Mac-side temporary processes (tunnel `cloudflared` and the local tsx
 server); the site must keep working with the Mac powered off.
+
+**Done (2026-11-01):** the local Mac processes were stopped after the public
+verification — nothing on the Mac is required for the deployed app to keep
+serving traffic.
