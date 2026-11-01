@@ -26,7 +26,6 @@ $Root='C:\Empire'
 $Port = if($Instance -eq 'staging'){ 8892 } else { 8891 }
 $Task = if($Instance -eq 'staging'){ 'EmpireStaging' } else { 'EmpireProduction' }
 $OtherInstance = if($Instance -eq 'staging'){ 'production' } else { 'staging' }
-$EnvFileFlag = '--env-file="?C:/Empire/shared/' + $Instance + '.env'
 $ReleaseSha = (Get-Content "$Root\shared\active-release-$Instance.txt" -Raw).Trim()
 $ReleasePathRoot = "$Root\releases\$Instance\$ReleaseSha"
 
@@ -37,14 +36,16 @@ if(-not (Test-Path $ReleasePathRoot)){ throw "release path missing: $ReleasePath
 function BadMark([string]$cl){
   if($null -eq $cl){ return $true }
   if($cl -imatch 'Collectz'){ return $true }
-  if($cl -imatch ("--env-file=.?C:/Empire/shared/" + $OtherInstance + ".env")){ return $true }
+  $clFlat = ($cl -replace '"','') -replace "'",""
+  if($clFlat -like ('*' + '--env-file=C:/Empire/shared/' + $OtherInstance + '.env*')){ return $true }
   return $false
 }
 
 $nodes = Get-CimInstance Win32_Process -Filter "Name='node.exe'"
+# compare quote-stripped command lines (spawned arg quoting varies)
 $wrappers = @($nodes | Where-Object {
-  $cl = $_.CommandLine
-  ($cl -imatch [regex]::Escape($EnvFileFlag)) -and (-not (BadMark $cl))
+  $cl = ($_.CommandLine -replace '"','') -replace "'",""
+  ($cl -like '*--env-file=C:/Empire/shared/' + $Instance + '.env*') -and (-not (BadMark $cl))
 })
 $wrapperIds = @($wrappers | ForEach-Object { $_.ProcessId })
 $children = @($nodes | Where-Object {
@@ -68,8 +69,8 @@ if($portOwner){
   Write-Output 'port listener: none (instance likely stopped)'
 }
 $otherCount = @($nodes | Where-Object {
-  $cl = $_.CommandLine
-  (($cl -imatch [regex]::Escape('--env-file="C:/Empire/shared/' + $OtherInstance + '.env'))) -and (-not (BadMark $cl))
+  $cl = ($_.CommandLine -replace '"','') -replace "'",""
+  ($cl -like ('*' + '--env-file=C:/Empire/shared/' + $OtherInstance + '.env*')) -and (-not (BadMark $cl))
 }).Count
 Write-Output "other-instance processes (excluded): $otherCount"
 
