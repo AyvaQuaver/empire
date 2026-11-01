@@ -28,9 +28,21 @@ $Sha=(git -C $Repo rev-parse $Ref).Trim()
 if($Sha -notmatch '^[a-f0-9]{40}$'){ throw "invalid ref: $Ref" }
 Write-Output "empire:deploy sha=$Sha"
 
-# Build fresh release directory (existing releases stay for rollback)
-$ReleaseDir=Join-Path "$Root\releases" $Sha
-if(-not (Test-Path $ReleaseDir)){
+# Build fresh release directory (per-instance: instances must never share a
+# tree, or two simultaneous deploys would clobber the same node_modules).
+$ReleaseDir=Join-Path (Join-Path $Root "releases\$Instance") $Sha
+$installedNodeModules=(Test-Path (Join-Path $ReleaseDir 'node_modules'))
+if($installedNodeModules){
+  # Re-deploying a release this instance may be running: stop first so file
+  # locks (esbuild.exe etc.) release before npm ci rebuilds the tree.
+  Stop-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+}
+if((Test-Path $ReleaseDir) -and -not $installedNodeModules){
+  # partial/broken tree (interrupted install): start fresh
+  Remove-Item $ReleaseDir -Recurse -Force
+}
+if(-not $installedNodeModules){
   & git -C $Repo archive --format=zip --output="$env:TEMP\empire-$Sha.zip" $Sha
   if($LASTEXITCODE -ne 0){ throw 'git archive failed' }
   New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
