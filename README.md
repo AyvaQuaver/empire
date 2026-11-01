@@ -173,6 +173,10 @@ Rules enforced by code and tests:
 
 ## Deployment notes (staging)
 
+**Real deployment** (server + Cloudflare + playempire.uk): see **[deploy/README.md](deploy/README.md)** —
+one-command deploy/rollback, systemd unit template, nginx + TLS config, SQLite
+backup/restore, Cloudflare DNS records, and a post-deploy verification checklist.
+
 **Supported deployment model (important):**
 
 - **Exactly one application instance.** The database is SQLite on a **persistent

@@ -1,0 +1,62 @@
+# Empire systemd unit template
+#
+# One instance per environment, managed by the instance name:
+#   sudo cp deploy/empire@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now empire@staging
+#
+# If systemd reports the app user is missing:
+#   sudo useradd --system --home /srv/empire --shell /usr/sbin/nologin empire
+
+[Unit]
+Description=Empire game server (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=empire
+Group=empire
+
+# App root contains a full checkout (npm ci build) of the deployed commit.
+WorkingDirectory=/srv/empire/app
+
+# Secrets live outside the repo checkout in a root/admin-owned directory with
+# 0600 permissions; values are never part of the unit, logs or command lines.
+EnvironmentFile=/srv/empire/secrets/empire-%i.env
+
+# The server bundles no JS; it runs the TypeScript server via the local tsx.
+# Keep /usr/bin/node >= 22.5 (node:sqlite) — built against Node 25.
+ExecStart=/srv/empire/app/node_modules/.bin/tsx server/src/index.ts
+
+# Crash recovery: always restart, steady state first.
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# Start open: the migration step and first request happen quickly; deploy.sh
+# probes /api/health after restart-verifies the unit is healthy in practice.
+
+# Hardening: no privilege escalation paths, strict filesystem scope.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Persistent storage lives outside the checkout; only these are writable.
+ReadWritePaths=/srv/empire/%i
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+# SQLite is a single-node store: bound its footprint.
+MemoryMax=512M
+TasksMax=128
+
+# Logs to journald; rotate with journald defaults (see deploy/README.md).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=empire-%i
+
+[Install]
+WantedBy=multi-user.target
