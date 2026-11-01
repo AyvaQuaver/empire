@@ -19,7 +19,7 @@ if(-not $Ref){
 }
 Write-Output "empire:deploy instance=$Instance ref=$Ref"
 
-& git -C $Repo fetch origin $Ref
+& git -C $Repo fetch origin ($Ref -replace '^origin/','')
 if($LASTEXITCODE -ne 0){ throw 'git fetch failed' }
 
 $Sha=(git -C $Repo rev-parse $Ref).Trim()
