@@ -5,15 +5,27 @@ Date: 2026-11-01 · branch: `codex/empire-mvp` (repo: github.com/AyvaQuaver/empi
 ## Temp shared URL (2026-11-01)
 
 A **temporary** public URL is available for review:
-`https://6e0f01ed0aab0c.lhr.life` — a localhost.run SSH tunnel to a locally run
+`https://20357f4a099d96.lhr.life` — a localhost.run SSH tunnel to a locally run
 single-instance server (`npm run build` output served by Express; SQLite file
 `./data/empire.db` on this machine). Verified end-to-end over the public URL:
 room create/join/lock/private words/snapshot privacy (stranger sees nothing, own
 word only), lease-gated word-only reading payload, results + history. Runs in
 `EMPIRE_ENV=development`-equivalent mode because no SMTP credentials exist yet
 (nothing purchased): guest play is fully functional; register/verification/reset
-emails can't be delivered. The URL lives only while this machine's tunnel stays
-up — it is not a cloud deployment and SQLite + account data are local.
+emails can't be delivered. **The URL lives only while this machine's tunnel stays
+up, and the free tunnel rotates its subdomain on every reconnect** (stale URLs
+502) — it is not a cloud deployment and SQLite + account data remain local. If the
+URL goes dark, ask for it to be restarted; it is two commands (see below).
+
+To run the same demo locally/on any machine:
+
+```bash
+npm run build
+SESSION_SECRET=$(openssl rand -base64 32) EMPIRE_DB_FILE="$PWD/data/empire.db" \
+  PORT=8787 npx tsx server/src/index.ts &          # serves dist/ + API, one origin
+ssh -R 80:localhost:8787 nokey@localhost.run        # prints the temporary https URL
+# then restart the server with APP_BASE_URL=<printed url> so QR/invite links match
+```
 
 
 ## 00. Second review round (2026-11-01)
