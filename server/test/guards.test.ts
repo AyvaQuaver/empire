@@ -100,7 +100,7 @@ describe("session & token guards", () => {
     expect(health.headers.cacheControl).toBe("no-store");
   });
 
-  it("a roster member can explicitly take over an active lease; the old device is fenced out", async () => {
+  it("speaker changes are organiser-approved + participant-accepted; recovery claims are atomic", async () => {
     const organiser = new Client(base);
     const created = await organiser.post("/api/rooms", { displayName: "TakeHost", genre: "Films" });
     const code = created.json.room.code;
@@ -113,16 +113,29 @@ describe("session & token guards", () => {
     for (const [p, w] of [[organiser, "drama"], [p2, "mesh"], [p3, "ode"]] as [Client, string][]) {
       expect((await p.put(`/api/rooms/${code}/my-word`, { word: w })).status).toBe(200);
     }
-    // organiser holds the speaker lease via start
     const start = await organiser.post(`/api/rooms/${code}/reading/start`);
     expect(start.status).toBe(200);
     const organiserToken = start.json.leaseToken as string;
-    // p2 (not organiser) takes over with the explicit force flag
-    const takeover = await p2.post(`/api/rounds/${roundId}/lease`, { action: "takeover", force: true });
-    expect(takeover.status).toBe(200);
-    const p2Token = takeover.json.leaseToken as string;
+
+    // Ordinary member cannot claim while a valid lease exists; no force actions exist.
+    expect((await p2.post(`/api/rounds/${roundId}/lease`, { action: "acquire" })).status).toBe(409);
+    expect((await p2.post(`/api/rounds/${roundId}/lease`, { action: "takeover", force: true })).status).toBe(400);
+
+    // Wrong-person acceptance (no authorization for p3) is rejected.
+    expect((await p3.post(`/api/rounds/${roundId}/speaker/accept`)).status).toBe(410);
+
+    // Organiser authorizes p2; p2 accepts on their own device.
+    const p2Id = (await p2.get(`/api/rooms/${code}/state`)).json.snapshot.me.playerId;
+    expect((await organiser.post(`/api/rooms/${code}/speaker/authorize`, { playerId: p2Id })).status).toBe(200);
+    const accept = await p2.post(`/api/rounds/${roundId}/speaker/accept`);
+    expect(accept.status).toBe(200);
+    const p2Token = accept.json.leaseToken as string;
     expect(p2Token).toBeTruthy();
-    // the previous device is now fenced out: its token is stale
+
+    // Replayed acceptance fails (single-use).
+    expect((await p2.post(`/api/rounds/${roundId}/speaker/accept`)).status).toBe(410);
+
+    // The old speaker device is fenced out: payload + progress rejected.
     expect(
       (
         await organiser.post(`/api/rounds/${roundId}/reading/ack`, {
@@ -132,25 +145,131 @@ describe("session & token guards", () => {
         })
       ).status,
     ).toBe(403);
-    // but the takeover holder can use theirs (right session + right token)
     expect(
       (
-        await p2.post(`/api/rounds/${roundId}/reading/ack`, {
+        await organiser.get(`/api/rounds/${roundId}/reading/words?reading=1`, { "x-empire-lease": organiserToken })
+      ).status,
+    ).toBe(403);
+
+    // The new speaker works with their own token; the list stays owner-free.
+    expect(
+      (
+        await p2.post(`/api/rounds/${roundId}/reading/ack`, { leaseToken: p2Token, readingNumber: 1, position: 1 })
+      ).status,
+    ).toBe(200);
+    const payload = await p2.get(`/api/rounds/${roundId}/reading/words?reading=1`, { "x-empire-lease": p2Token });
+    expect(payload.status).toBe(200);
+    expect(new Set(payload.json.words as string[])).toEqual(new Set(["drama", "mesh", "ode"]));
+    expect(JSON.stringify(payload.json)).not.toContain("Sloane");
+    expect(payload.json).not.toHaveProperty("owner");
+    expect(payload.json).not.toHaveProperty("playerId");
+
+    // The transfer didn't unlock submissions or alter the round state.
+    expect((await p3.put(`/api/rooms/${code}/my-word`, { word: "other" })).status).toBe(409);
+    expect((await p2.get(`/api/rooms/${code}/state`)).json.snapshot.round.state).toBe("reading");
+
+    // Two participants racing to claim an EXPIRED lease: exactly one wins.
+    t.handle.db.prepare("UPDATE speaker_leases SET expires_at = 0 WHERE round_id = ?").run(roundId);
+    const [c1, c2] = await Promise.all([
+      p2.post(`/api/rounds/${roundId}/lease`, { action: "acquire" }),
+      p3.post(`/api/rounds/${roundId}/lease`, { action: "acquire" }),
+    ]);
+    const statuses = [c1.status, c2.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    const claimant = c1.status === 200 ? p2 : p3;
+    const claimToken = (c1.status === 200 ? c1 : c2).json.leaseToken as string;
+
+    // Recovery preserves the saved order: same word list, nothing regenerated.
+    const again = await claimant.get(`/api/rounds/${roundId}/reading/words?reading=1`, { "x-empire-lease": claimToken });
+    expect(again.status).toBe(200);
+    expect(new Set(again.json.words as string[])).toEqual(new Set(["drama", "mesh", "ode"]));
+
+    // The previous holder's token can't continue playback.
+    expect(
+      (
+        await organiser.post(`/api/rounds/${roundId}/reading/ack`, {
           leaseToken: p2Token,
+          readingNumber: 1,
+          position: 2,
+        })
+      ).status,
+    ).toBe(403);
+
+    // The organiser (same session) still has its identity; snapshot shows the speaker.
+    const st = await organiser.get(`/api/rooms/${code}/state`);
+    expect(st.json.snapshot.reading.speaker?.displayName).toBeTruthy();
+    expect(st.json.snapshot.round.state).toBe("reading");
+  });
+
+  it("expired/cancelled transfer authorizations are rejected", async () => {
+    const organiser = new Client(base);
+    const created = await organiser.post("/api/rooms", { displayName: "XferHost", genre: "Films" });
+    const code = created.json.room.code;
+    const roundId = created.json.round.id;
+    const p2 = new Client(base);
+    const p3 = new Client(base);
+    await p2.post("/api/rooms/join", { code, displayName: "Firm0" });
+    await p3.post("/api/rooms/join", { code, displayName: "Firm1" });
+    await organiser.post(`/api/rooms/${code}/lock`);
+    for (const [p, w] of [[organiser, "alpha"], [p2, "bravo"], [p3, "charlie"]] as [Client, string][]) {
+      expect((await p.put(`/api/rooms/${code}/my-word`, { word: w })).status).toBe(200);
+    }
+    await organiser.post(`/api/rooms/${code}/reading/start`);
+
+    const p2Id = (await p2.get(`/api/rooms/${code}/state`)).json.snapshot.me.playerId;
+    await organiser.post(`/api/rooms/${code}/speaker/authorize`, { playerId: p2Id });
+    // force the authorization to expire (simulates timeout)
+    t.handle.db
+      .prepare("UPDATE speaker_transfers SET expires_at = ? WHERE to_player_id = ?")
+      .run(Date.now() - 1000, p2Id);
+    expect((await p2.post(`/api/rounds/${roundId}/speaker/accept`)).status).toBe(410);
+
+    // re-authorize then cancel
+    await organiser.post(`/api/rooms/${code}/speaker/authorize`, { playerId: p2Id });
+    t.handle.db.prepare("UPDATE speaker_transfers SET cancelled_at = ? WHERE to_player_id = ?").run(Date.now(), p2Id);
+    expect((await p2.post(`/api/rounds/${roundId}/speaker/accept`)).status).toBe(410);
+
+    // a late joiner isn't a participant; unknown ids are refused
+    const late = new Client(base);
+    expect((await late.post("/api/rooms/join", { code, displayName: "LateJoin" })).status).toBe(409);
+    expect((await organiser.post(`/api/rooms/${code}/speaker/authorize`, { playerId: "nonexistent" })).status).toBe(400);
+  });
+
+  it("speaker access ends when the round is cancelled", async () => {
+    const organiser = new Client(base);
+    const created = await organiser.post("/api/rooms", { displayName: "HostFin", genre: "Films" });
+    const code = created.json.room.code;
+    const roundId = created.json.round.id;
+    const p2 = new Client(base);
+    const p3 = new Client(base);
+    await p2.post("/api/rooms/join", { code, displayName: "Finitely" });
+    await p3.post("/api/rooms/join", { code, displayName: "Finale" });
+    await organiser.post(`/api/rooms/${code}/lock`);
+    for (const [p, w] of [[organiser, "alpha"], [p2, "bravo"], [p3, "charlie"]] as [Client, string][]) {
+      expect((await p.put(`/api/rooms/${code}/my-word`, { word: w })).status).toBe(200);
+    }
+    const start = await organiser.post(`/api/rooms/${code}/reading/start`);
+    const token = start.json.leaseToken as string;
+    await organiser.post(`/api/rooms/${code}/cancel-round`);
+    expect(
+      (await organiser.get(`/api/rounds/${roundId}/reading/words?reading=1`, { "x-empire-lease": token })).status,
+    ).toBe(403); // refused (lease killed on cancel; refusal via whole-path anyway)
+    expect(
+      (
+        await organiser.post(`/api/rounds/${roundId}/reading/ack`, {
+          leaseToken: token,
           readingNumber: 1,
           position: 1,
         })
       ).status,
-    ).toBe(200);
-    // the payload's word list carries no names and no ownership metadata
-    const payload = await p2.get(`/api/rounds/${roundId}/reading/words?reading=1`, { "x-empire-lease": p2Token });
-    expect(payload.status).toBe(200);
-    const body = JSON.stringify(payload.json);
-    expect(new Set(payload.json.words as string[])).toEqual(new Set(["drama", "mesh", "ode"]));
-    expect(body).not.toContain("Sloane");
-    expect(payload.json).not.toHaveProperty("owner");
-    expect(payload.json).not.toHaveProperty("playerId");
-    expect(Object.keys(payload.json as object).filter((k) => k !== "readingNumber" && k !== "words")).toEqual([]);
+    ).toBe(403);
+  });
+  it("the dev outbox endpoint is unreachable outside development, even with the flag set", async () => {
+    // This suite runs with NODE_ENV=test/EMPIRE_ENV=test: attempt the override.
+    process.env.ALLOW_DEV_EMAIL_PREVIEW = "true";
+    const c = new Client(base);
+    expect((await c.get("/api/dev/outbox")).status).toBe(404);
+    delete process.env.ALLOW_DEV_EMAIL_PREVIEW;
   });
 });
 

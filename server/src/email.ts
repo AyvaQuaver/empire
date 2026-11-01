@@ -13,16 +13,16 @@ export interface QueuedEmail {
 
 export async function deliverEmail(db: DB, mail: QueuedEmail): Promise<void> {
   if (!config.smtp.host) {
-    // In production/staging, missing SMTP is a configuration problem, not fake
-    // success: callers turn this into a clear user-facing failure or a silent,
-    // identical "if that account exists" reset response as appropriate.
+    // In staging/production, missing SMTP is a configuration problem, not fake
+    // success (startup validation already rejects it; this guards runtime edits).
     if (config.isProduction) {
       throw new Error(
         "SMTP is not configured: set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD and EMAIL_FROM. Email cannot be delivered.",
       );
     }
-    // Development only: the outbox table is a local fixture, readable via the
-    // dev-only, local-machine preview endpoint (ALLOW_DEV_EMAIL_PREVIEW=true).
+    // Development AND test only. Staging/production can never reach this branch:
+    // reset/verification links must never be written to a dev outbox, returned
+    // in API responses, or logged outside local development.
     db.prepare("INSERT INTO email_outbox (to_email, subject, body, created_at) VALUES (?, ?, ?, ?)").run(
       mail.to,
       mail.subject,

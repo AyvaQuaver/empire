@@ -83,6 +83,27 @@ describe("SpeechRunner", () => {
     expect(result).toBe("failed");
   });
 
+  it("a revoked lease (server rejects the ack) halts queueing of further words", async () => {
+    const adapter = fakeAdapter();
+    const runner = new SpeechRunner(adapter, { pauseMs: PAUSE });
+    // The server rejects everything after the first word: the transfer killed
+    // this device's lease. The chain must NOT queue remaining words.
+    const runPromise = runner.run(1, ["one", "two", "three"], {
+      onWordComplete: (index) => {
+        if (index >= 1) {
+          const e = new Error("403 Someone else is speaking on this device.");
+          throw e;
+        }
+      },
+    });
+    // announcement + first word spoken, second word already in flight when the
+    // ack is rejected — everything after that ("three") is NOT queued
+    await drain(adapter, 3);
+    const result = await runPromise;
+    expect(result).toBe("failed");
+    expect(adapter.spoken).toEqual(["Reading one", "one", "two"]);
+  });
+
   it("cancellation invalidates the running loop before the next utterance", async () => {
     const adapter = fakeAdapter();
     const runner = new SpeechRunner(adapter, { pauseMs: PAUSE });

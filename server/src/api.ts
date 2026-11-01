@@ -314,6 +314,30 @@ export function buildRouter(db: DB): Router {
     }
   });
 
+  // -- speaker transfer (organiser-approved, participant-accepted) ---------
+  router.post("/rooms/:code/speaker/authorize", (req, res, next) => {
+    try {
+      const room = roomByParam(req);
+      const out = roundsService.authorizeSpeakerTransfer(db, room, sessionIdOf(req), String(req.body?.playerId ?? ""));
+      res.json({ ok: true, expiresAt: out.expiresAt });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/rounds/:id/speaker/accept", (req, res, next) => {
+    try {
+      const round = requireRound(db, String(req.params.id));
+      const room = roomsService.getRoomById(db, round.room_id) as roomsService.RoomRow;
+      const s = requireSession(req);
+      const player = roomsService.requireMember(db, room, s.id);
+      const leaseToken = roundsService.acceptSpeakerTransfer(db, round, s.id, player);
+      res.json({ ok: true, leaseToken });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.post("/rounds/:id/lease", (req, res, next) => {
     try {
       const round = requireRound(db, String(req.params.id));
@@ -321,10 +345,10 @@ export function buildRouter(db: DB): Router {
       const s = requireSession(req);
       const action = String(req.body?.action ?? "");
       const player = roomsService.requireMember(db, room, s.id);
-      if (action === "acquire" || action === "takeover") {
-        const out = roundsService.acquireLease(db, round, s.id, player, {
-          force: action === "takeover" || req.body?.force === true,
-        });
+      if (action === "acquire") {
+        // Recovery claim: only succeeds when no valid speaker lease exists
+        // (expired or absent). An active lease belongs to whoever holds it.
+        const out = roundsService.acquireLease(db, round, s.id, player, {});
         res.json({ ok: true, leaseToken: out.leaseToken });
       } else if (action === "renew") {
         roundsService.renewLease(db, round, s.id, String(req.body?.leaseToken ?? ""));
@@ -578,8 +602,11 @@ export function buildRouter(db: DB): Router {
     }
   });
 
-  // -- dev-only email outbox preview (ALLOW_DEV_EMAIL_PREVIEW, local development only)
-  if (config.allowDevEmailPreview) {
+  // -- dev-only email outbox preview --------------------------------------------------
+  // Strictly development-only: EMPIRE_ENV must be "development" AND the flag must
+  // be explicitly set. Staging/production can never enable this (validated at
+  // startup too), and it is never reachable in the browser over the network there.
+  if (config.nodeEnv === "development" && config.allowDevEmailPreview) {
     router.get("/dev/outbox", (_req, res) => {
       const rows = db
         .prepare("SELECT id, to_email, subject, body, created_at FROM email_outbox ORDER BY id DESC LIMIT 50")

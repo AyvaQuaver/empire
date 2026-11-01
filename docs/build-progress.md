@@ -2,7 +2,52 @@
 
 Date: 2026-11-01 · branch: `codex/empire-mvp` (local repo; no remote configured)
 
-## 0. Post-handoff review round (2026-11-01)
+## 00. Second review round (2026-11-01)
+
+Findings → fixes, verified:
+
+1. **Config fail-fast** (`server/src/config.ts` + `server/src/index.ts`): explicit
+   `EMPIRE_ENV` policy (development|test|staging|production). Staging/production
+   **refuse to start** (exit before listening) on missing/blank/placeholder
+   `SESSION_SECRET`, missing/incomplete SMTP (`SMTP_HOST`, credentials, valid
+   `EMAIL_FROM`), or contradictory `ALLOW_DEV_EMAIL_PREVIEW`. No defaults/blank
+   substitutions; error messages never include secret values. Secrets documented
+   (`openssl rand -base64 32`), kept in provider env stores; stability across
+   restarts required; pepper-change breaks existing password hashes (no auto
+   rotation). Tests: `startup.test.ts` incl. a spawned staging process really
+   refusing to boot, and a register→restart→sign-in/old-cookie recovery suite.
+2. **Speaker transfer rebuilt** (`migrations/0002`, `rounds.ts`, `api.ts`,
+   `ReadingView.tsx`): force takeover removed. Paths: same-session continue;
+   recovery claim by any participant on an EXPIRED/absent lease (atomic — race
+   test with two claimants yields exactly one 200 + one 409); organiser-authorized
+   transfer (5-min, single-use, round+participant-bound row) accepted only on the
+   authorized participant's own device (wrong person/expired/replayed → 410).
+   Acceptance atomically issues the lease and fences the old device; transfers
+   never touch word data, roster, submissions or the starter. UI shows who is
+   speaking now (`snapshot.reading.speaker`), plus a per-me
+   `transferPendingForMe` accept button. Speaker access ends with the round.
+3. **Lost-audio semantics implemented + documented** (`speech.ts`/`ReadingView.tsx`):
+   revoked/failed lease stops the chain and cancels local playback (in-flight
+   utterance via `adapter.cancel()`; later words never queued — runner test
+   proves "three" is not queued after a 403 ack). The server cannot silence an
+   offline device; transfer/recovery UIs show "Stop playback on the previous
+   phone before continuing" and the limitation is documented.
+4. **Email/outbox strictness** (`email.ts`, `api.ts`): outbox writes/logs only in
+   development/test; browser route only when `EMPIRE_ENV === "development"` AND the
+   flag is set; staging cannot enable it (validated at boot + route check 404
+   test); SMTP delivery failures stay generic and never echo tokens; no
+   enumeration anywhere (existing tests cover).
+5. **Docs updated** (README + `.env.example`): exact env policy table, secret
+   generation/rotation warning, SMTP requirements, backup procedure, migration
+   flow, single-instance/volume requirements, speaker-transfer/offline-device
+   limitations, costs marked as estimates-awaiting-verification.
+6. **Regression browser smoke (4 players, Chromium)**: full flow incl. one-tap
+   automatic readings, reload-disconnect mid-chain, manual "Restart readings
+   (saved order)" recovery, starter persisted, winner recorded (stats: Runner3
+   gamesPlayed 1, wins 1), next round opened with round-1 secrets purged (DB
+   checked), no word text in the DOM at any point.
+
+## 0. First review round (2026-11-01)
 
 Findings → fixes, all verified:
 

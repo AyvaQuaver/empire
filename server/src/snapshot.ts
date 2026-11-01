@@ -2,7 +2,15 @@ import { GAME } from "./config.js";
 import type { DB } from "./db.js";
 import { activePlayers, findActivePlayerForSession, getRound, rosterForRound, type RoomRow } from "./services/rooms.js";
 import { getResult, resultView } from "./services/results.js";
-import { progressFor, rosterReadiness, getLease, getStarterPlayer } from "./services/rounds.js";
+import { progressFor, rosterReadiness, getLease, getStarterPlayer, pendingSpeakerTransferFor } from "./services/rounds.js";
+
+function playerByIdPublic(db: DB, playerId: string): { id: string; display_name: string } | null {
+  const row = db
+    .prepare("SELECT id, display_name FROM players WHERE id = ?")
+    .get(playerId) as { id: string; display_name: string } | undefined;
+  return row ?? null;
+}
+const pendingTransferFor = pendingSpeakerTransferFor;
 
 // The one authorized snapshot per request. Also returned NULL when the caller
 // is not currently an active member (routes then offer the join flow).
@@ -25,7 +33,14 @@ export interface RoomSnapshot {
   readiness: { ready: number; total: number } | null;
   myWord: string | null;
   canSubmitWord: boolean;
-  reading: { held: boolean; mine: boolean; readingNumber: number; position: number } | null;
+  reading: {
+    held: boolean;
+    mine: boolean;
+    readingNumber: number;
+    position: number;
+    transferPendingForMe: boolean;
+    speaker: { playerId: string; displayName: string } | null;
+  } | null;
   speakerActive: boolean;
   starter: { playerId: string; displayName: string } | null;
   result: null | ReturnType<typeof resultView>;
@@ -62,6 +77,9 @@ export function buildRoomSnapshot(db: DB, room: RoomRow, sessionId: string, base
   const resultRow = getResult(db, round.id);
   const starterPlayer =
     round.state === "playing" || round.state === "finished" ? getStarterPlayer(db, round) : null;
+  const pendingSpeakerTransferForMe =
+    round.state === "reading" && !leaseActive ? pendingTransferFor(db, round.id, me.id) : false;
+  const speakerRow = leaseActive && lease?.holder_player_id ? playerByIdPublic(db, lease.holder_player_id) : null;
 
   let rosterPreview: RoomSnapshot["rosterPreview"] = null;
   if (round.state === "lobby_open") {
@@ -113,6 +131,12 @@ export function buildRoomSnapshot(db: DB, room: RoomRow, sessionId: string, base
           mine: leaseActive && lease.holder_session_id === sessionId,
           readingNumber: progress.reading_number,
           position: progress.position,
+          // Self-scoped only: whether the organiser has authorized THIS device's
+          // player to become the next speaker (accepting is a manual tap here).
+          transferPendingForMe: pendingSpeakerTransferForMe,
+          // Public: the reading duty holder's name (they read the words aloud to
+          // everyone anyway). Never carries word data.
+          speaker: leaseActive && speakerRow ? { playerId: speakerRow.id, displayName: speakerRow.display_name } : null,
         }
       : null,
     speakerActive: leaseActive,

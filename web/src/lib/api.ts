@@ -73,7 +73,14 @@ export interface RoomSnapshot {
   readiness: { ready: number; total: number } | null;
   myWord: string | null;
   canSubmitWord: boolean;
-  reading: { held: boolean; mine: boolean; readingNumber: number; position: number } | null;
+  reading: {
+    held: boolean;
+    mine: boolean;
+    readingNumber: number;
+    position: number;
+    transferPendingForMe: boolean;
+    speaker: { playerId: string; displayName: string } | null;
+  } | null;
   speakerActive: boolean;
   starter: { playerId: string; displayName: string } | null;
   result: {

@@ -48,19 +48,32 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
   const mine = snap.reading?.mine ?? false;
   const held = snap.reading?.held ?? false;
 
-  // One tap total: the organiser's "Start readings" moves us here; this device
-  // is the lease holder, so start announcing automatically — but ONLY for a
-  // fresh reading position. A refresh mid-reading keeps going manually so the
-  // audio never restarts unexpectedly.
-  const autoStartRef = useRef(false);
+  // One tap total: the organiser's "Start readings" (WordEntryView) sets a
+  // sessionStorage flag before navigation; on arrival here, the speaker device
+  // auto-loads the saved list and runs all three readings + starter. Only a
+  // fresh position (nobody started yet) auto-runs; recovery/claims never do.
+  const autoStartRef = useRef<string | null>(
+    typeof sessionStorage !== "undefined" ? sessionStorage.getItem("empire-just-started") : null,
+  );
   const beTheSpeakerRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const runReadingsRef = useRef<((r: number, w: string[]) => Promise<void>) | null>(null);
   useEffect(() => {
-    if (autoStartRef.current) return;
-    if (!snap.reading || !snap.reading.mine || snap.reading.position > 0) return;
-    if (!support.supported) return;
-    autoStartRef.current = true;
-    void beTheSpeakerRef.current();
-  }, [snap.reading?.mine, snap.reading?.position, support.supported]);
+    if (!autoStartRef.current) {
+      return;
+    }
+    if (words && snap.reading?.mine && snap.reading.position === 0) {
+      // words loaded on this device with a fresh position: run the whole chain
+      if (typeof sessionStorage !== "undefined") sessionStorage.removeItem("empire-just-started");
+      autoStartRef.current = null;
+      void runReadingsRef.current?.(snap.reading.readingNumber ?? 1, words);
+      return;
+    }
+    if (!words) {
+      // ensure this device has its lease + the saved word list loaded
+      void beTheSpeakerRef.current();
+    }
+    // deliberately narrow dependency watch: fires when words/lease state settles
+  }, [snap.reading?.mine, snap.reading?.position, words, support.supported]);
 
   const wrap = act;
 
@@ -81,26 +94,15 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
       leaseRef.current = out.leaseToken;
       const loaded = await fetchWords(out.leaseToken, snap.reading?.readingNumber ?? 1);
       setWords(loaded);
-      // One tap from here: all three readings run, then the starter is announced.
-      await runReadings(snap.reading?.readingNumber ?? 1, loaded);
+      // NOTE: this is recovery/claim — audio is NOT started automatically.
+      // For the organiser's brand-new "Start readings" journey, the
+      // just-started flag (set by WordEntryView) triggers the auto-run below.
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not become the speaker.");
+    } finally {
       setBusy(false);
     }
   };
-
-  const takeover = () =>
-    void wrap(async () => {
-      const out = await api.post<{ leaseToken: string }>(`/api/rounds/${snap.round.id}/lease`, {
-        action: "takeover",
-        force: true,
-      });
-      setLeaseToken(out.leaseToken);
-      leaseRef.current = out.leaseToken;
-      const loaded = await fetchWords(out.leaseToken, snap.reading?.readingNumber ?? 1);
-      setWords(loaded);
-      await runReadings(snap.reading?.readingNumber ?? 1, loaded);
-    })();
 
   const ackFor = (readingNumber: number) => async (index: number) => {
     await api.post(`/api/rounds/${snap.round.id}/reading/ack`, {
@@ -147,12 +149,53 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
         readingNumber = next;
       }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "The words couldn't be announced.");
+      // Replay/cancellation safety: a lost or revoked lease (403 after a
+      // transfer, expiry, takeover) must also silence THIS device locally —
+      // best-effort. The in-flight utterance stops via adapter.cancel(); words
+      // beyond the current one are never queued because the chain halts here.
+      // A device that stays offline can't learn the lease was revoked — the
+      // server can't remotely silence it; that's why acceptance asks people to
+      // stop playback on the previous phone.
+      runnerRef.current?.cancel();
+      setActionError(
+        err instanceof Error
+          ? err.message.includes("403") || err.message.includes("speaker")
+            ? "This device stopped being the speaker — the saved readings continue on another device or after restart."
+            : err.message
+          : "The words couldn't be announced.",
+      );
     } finally {
       await wrap(async () => undefined)().catch(() => undefined); // refresh state
       setBusy(false);
     }
   };
+
+  // Organiser-approved speaker transfer: authorization from the organiser is
+  // accepted here on the player's own device. Acceptance loads the saved word
+  // list but does NOT auto-start audio — the explicit Start readings tap is
+  // required (recovery is never automatic).
+  const acceptApprovedTransfer = async () => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const out = await api.post<{ leaseToken: string }>(`/api/rounds/${snap.round.id}/speaker/accept`);
+      setLeaseToken(out.leaseToken);
+      leaseRef.current = out.leaseToken;
+      const loaded = await fetchWords(out.leaseToken, snap.reading?.readingNumber ?? 1);
+      setWords(loaded);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not accept the speaker role.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Pick the next speaker: the organiser records an authorization for that
+  // participant; the participant taps a button on their own device to accept.
+  const authorizeSpeaker = (playerId: string) =>
+    void wrap(async () => {
+      await api.post(`/api/rooms/${snap.room.code}/speaker/authorize`, { playerId });
+    })();
 
   const doRestart = () =>
     void wrap(async () => {
@@ -167,6 +210,7 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
       setWords(out.words);
     })();
   beTheSpeakerRef.current = beTheSpeaker;
+  runReadingsRef.current = runReadings;
 
   const paused = runnerRef.current?.running === false && status.phase !== "done" && readingStarted && words !== null && !busy;
   void paused;
@@ -197,46 +241,76 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
       )}
       {words === null && !mine && !snap.me.isOrganiser && snap.me.inRoster && (
         <Panel heading="Speaker">
-          {held ? (
+          {snap.reading?.transferPendingForMe ? (
             <>
-              <p className="status-text">A speaker device is active.</p>
+              <p className="status-text" role="status">
+                The organiser picked this device as the next speaker.
+              </p>
+              <p className="status-text">
+                Stop playback on the previous phone before continuing. The saved readings continue in the same order
+                here — nothing is regenerated.
+              </p>
+              <Button className="btn-primary btn-cta" loading={busy} onClick={() => void acceptApprovedTransfer()}>
+                Accept speaker role
+              </Button>
+            </>
+          ) : held ? (
+            <>
+              <p className="status-text">
+                Speaking now: {snap.reading?.speaker?.displayName ?? "another device"}.
+              </p>
               <p className="status-text" style={{ textAlign: "center" }}>
                 Reading {currentReading} of 3
+              </p>
+              <p className="status-text">
+                If their device stops working, the organiser can pick you; when their lease expires you can also claim
+                the speaker role here.
               </p>
             </>
           ) : (
             <>
               <p className="status-text">
-                Anyone can be the speaker — one device only reads the words out loud. Ask the organiser if the sound
-                test failed.
+                Anyone can be the speaker — one device only reads the words out loud. If the organiser's device is
+                offline, you can claim the speaker role with the button below.
               </p>
               <Button className="btn-secondary btn-cta" loading={busy} onClick={() => void beTheSpeaker()}>
-                Speak on this device
+                Claim speaker role
               </Button>
             </>
           )}
         </Panel>
       )}
 
-      {words === null && snap.me.isOrganiser && (
+      {words === null && snap.me.isOrganiser && !mine && (
         <Panel heading="Speaker">
-          {mine ? (
+          {held ? (
             <>
-              <p className="status-text">This device is the speaker: it will read all three saved readings aloud, then announce the starter.</p>
-              <Button className="btn-primary btn-cta" loading={busy} onClick={() => void beTheSpeaker()}>
-                Continue as speaker
-              </Button>
-            </>
-          ) : held ? (
-            <>
-              <p className="status-text">Another speaker device is active.</p>
               <p className="status-text">
-                Taking over stops that device's audio and lease — the person there may see the run pause. The saved
-                readings continue in the same order on this device.
+                Speaking now: {snap.reading?.speaker?.displayName ?? "another device"}.
               </p>
-              <Button className="btn-primary btn-cta" onClick={takeover}>
-                Take over as speaker
-              </Button>
+              <p className="status-text">
+                To move the reading, authorize a participant below. They tap “Accept speaker role” on their own device;
+                acceptance stops the old device's lease. Everyone should stop playback on the previous phone before
+                continuing — the server can't remotely silence a device that stays offline.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {snap.players
+                  .filter((p) => p.inRoster && !p.isOrganiser)
+                  .map((p) => (
+                    <Button
+                      key={p.playerId}
+                      className="btn-secondary btn-small"
+                      onClick={() => authorizeSpeaker(p.playerId)}
+                    >
+                      Authorize {p.displayName}
+                    </Button>
+                  ))}
+              </div>
+              {snap.reading?.transferPendingForMe && (
+                <p className="status-text" role="status">
+                  This device is also authorized — use the “Accept speaker role” panel.
+                </p>
+              )}
             </>
           ) : (
             <>
@@ -246,6 +320,28 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
               </Button>
             </>
           )}
+        </Panel>
+      )}
+      {words === null && snap.me.isOrganiser && mine && (
+        <Panel heading="Speaker">
+          <p className="status-text">
+            This device is the speaker: it will read all three saved readings aloud, then announce the starter.
+          </p>
+          <Button className="btn-primary btn-cta" loading={busy} onClick={() => void beTheSpeaker()}>
+            {snap.reading?.position ?? 0 > 0 ? "Restart readings (saved order)" : "Load and start readings"}
+          </Button>
+          <p className="status-text">
+            To move elsewhere: authorize another participant below — they accept on their device.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {snap.players
+              .filter((p) => p.inRoster && !p.isOrganiser)
+              .map((p) => (
+                <Button key={p.playerId} className="btn-secondary btn-small" onClick={() => authorizeSpeaker(p.playerId)}>
+                  Authorize {p.displayName}
+                </Button>
+              ))}
+          </div>
         </Panel>
       )}
 

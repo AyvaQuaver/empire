@@ -58,12 +58,21 @@ Guarantees verified in tests:
 | Edit genre | ✘ | ✘ | ✔ lobby_open only |
 | Invite friends to room | ✘ | sender only | ✔ (accepted friends, open roster only) |
 
-Note — speaker takeover: any roster member may take over an **active** lease with
-the explicit force flag (verified in `guards.test.ts`); the current holder's lease
-is killed (fence bumped) and their stale acks are rejected with 403. This moves
-only the reading duty — the word list never carries owner metadata, so the takeover
-grants nothing about word ownership. The UI explains that taking over stops the
-previous device's audio.
+Note — speaker changes (three paths only):
+
+1. **Same device continues** the holder's own session re-acquires (refresh).
+2. **Recovery claim** by any current locked-round participant when the lease has
+   **expired or is absent** — atomic, first claimant wins (409 for the loser).
+3. **Organiser-approved transfer**: the organiser authorizes a participant
+   (`speaker_transfers` row: 5-minute TTL, single-use, round+participant bound);
+   the authorized participant accepts **on their own device** — acceptance
+   atomically consumes the authorization and issues the new lease, fencing the
+   old one. Wrong-person/expired/replayed/absent acceptance → 410.
+
+There is no unrestricted force takeover. Speaker access ends with the round
+(ack/payload refused after finish/cancel — verified). Transfers and recovery never
+regenerate the shuffled sequences, the starter, submissions, or the roster, and
+never grant organiser permissions (outcome verified in `guards.test.ts`).
 
 ## Server-enforced word-collection rules
 
@@ -152,9 +161,10 @@ Verified by `cleanup.test.ts` and `roster-retention.test.ts`.
 1. Winners are organiser-reported only — the game's mechanics are physical; the app
    trusts the organiser's report (with correction + audit).
 2. The speaker device necessarily receives the word list; anyone with access to that
-   device's browser DevTools (network tab) can read the payload. That's inherent to
-   TTS in the browser — the interface never displays the words, but the payload
-   arrives on that device and cannot be made fully secret from its owner.
+   device's browser DevTools (network tab) can read the payload. Best-effort local
+   cancellation stops new words from being queued after a lease revocation, but the
+   server cannot remotely silence a device that stays offline — transfer and
+   recovery UIs show "Stop playback on the previous phone before continuing".
 3. TTS differs between platforms (voice availability, pacing); the stall watchdog
    and restart-same-order recovery mitigate.
 4. Sessions are cookie-only; a shared device keeps the player's room membership

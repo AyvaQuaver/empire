@@ -193,5 +193,15 @@ export function WordEntryView({ snap, error, act }: { snap: RoomSnapshot; error:
   );
 }
 
-const apiStart = (code: string) => api.post(`/api/rooms/${code}/reading/start`);
+const apiStart = (code: string) =>
+  api.post(`/api/rooms/${code}/reading/start`).then(() => {
+    // Marks the single-tap journey: ReadingView may auto-run the three saved
+    // readings on THIS device only, and only for a fresh reading position.
+    try {
+      sessionStorage.setItem("empire-just-started", "1");
+    } catch {
+      // private-browsing quota issues: auto-run simply won't engage
+    }
+    return undefined;
+  });
 const apiLeave = (code: string) => api.post(`/api/rooms/${code}/leave`);

@@ -289,7 +289,7 @@ export function acquireLease(
   round: RoundRow,
   sessionId: string,
   player: PlayerRow,
-  opts: { force?: boolean; leaseToken?: string | null },
+  _opts: { leaseToken?: string | null } = {},
 ): { leaseToken: string; mine: true } {
   const existing = getLease(db, round.id);
   const active = existing && existing.killed === 0 && existing.expires_at > Date.now();
@@ -297,17 +297,102 @@ export function acquireLease(
     if (active) {
       if (existing.holder_session_id === sessionId) {
         // Same session re-acquiring (e.g. after a refresh): refresh the lease fencing.
-      } else if (!opts.force) {
+      } else {
+        // No silent override of an active speaker: the transfer must go through
+        // the organiser's authorization + the other device's explicit acceptance.
+        // Recovery claims happen only when the lease has expired or is absent.
         throw new AppError(ERR.SPEAKER_ACTIVE, 409, "Someone is already speaking on this screen.");
       }
-      // An explicit forced takeover by ANY roster member moves the speaker role:
-      // the previous lease is killed (fence bumped) and the old device's acks are
-      // rejected. This transfers only the reading duty — the word list never had
-      // owner metadata, so no one learns who holds which word. The previous
-      // device's audio stops because its run is invalidated and utterances cancel.
     }
     const token = issueLease(db, round.id, player, sessionId, Date.now());
     return { leaseToken: token, mine: true };
+  });
+}
+
+// ---- Organiser-approved speaker transfer ------------------------------------
+// Roles: the organiser manages the room and approves speaker changes; the
+// speaker plays the anonymous reading sequence; every other player just plays.
+// A transfer is a short-lived, single-use, round+participant-bound
+// authorization. The selected participant accepts ON THEIR OWN DEVICE — the
+// acceptance atomically issues the new lease and fences out the old one.
+
+const TRANSFER_TTL_MS = 5 * 60 * 1000;
+
+export function authorizeSpeakerTransfer(
+  db: DB,
+  room: RoomRow,
+  sessionId: string,
+  targetPlayerId: string,
+): { expiresAt: number } {
+  const organiser = requireOrganiser(db, room, sessionId);
+  const round = getRound(db, room.current_round_id);
+  if (!round || round.state !== "reading") {
+    throw new AppError(ERR.STATE, 409, "Speaker changes are only possible during readings.");
+  }
+  const target = playerById(db, targetPlayerId);
+  const inRoster = target
+    ? db.prepare("SELECT 1 FROM round_roster WHERE round_id = ? AND player_id = ?").get(round.id, target.id)
+    : undefined;
+  if (!target || !inRoster || target.status !== "active") {
+    throw new AppError(ERR.VALIDATION, 400, "Pick a current round participant as the next speaker.");
+  }
+  void organiser;
+  const now = Date.now();
+  return withTx(db, () => {
+    // Only one pending hand-off at a time: earlier authorizations are cancelled.
+    db.prepare(
+      "UPDATE speaker_transfers SET cancelled_at = ? WHERE round_id = ? AND used_at IS NULL AND cancelled_at IS NULL",
+    ).run(now, round.id);
+    db.prepare(
+      `INSERT INTO speaker_transfers (round_id, to_player_id, created_by_player_id, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(round_id, to_player_id) DO UPDATE SET
+         created_by_player_id = excluded.created_by_player_id,
+         created_at = excluded.created_at,
+         expires_at = excluded.expires_at,
+         used_at = NULL,
+         cancelled_at = NULL`,
+    ).run(round.id, target.id, organiser.id, now, now + TRANSFER_TTL_MS);
+    return { expiresAt: now + TRANSFER_TTL_MS };
+  });
+}
+
+export function cancelPendingSpeakerTransfer(db: DB, roundId: string, toPlayerId: string): void {
+  db.prepare(
+    "UPDATE speaker_transfers SET cancelled_at = ? WHERE round_id = ? AND to_player_id = ? AND used_at IS NULL AND cancelled_at IS NULL",
+  ).run(Date.now(), roundId, toPlayerId);
+}
+
+export function pendingSpeakerTransferFor(db: DB, roundId: string, playerId: string): boolean {
+  const row = db
+    .prepare(
+      "SELECT 1 FROM speaker_transfers WHERE round_id = ? AND to_player_id = ? AND used_at IS NULL AND cancelled_at IS NULL AND expires_at > ?",
+    )
+    .get(roundId, playerId, Date.now());
+  return row !== undefined;
+}
+
+/** Explicit acceptance by the authorized participant, on their own device. */
+export function acceptSpeakerTransfer(db: DB, round: RoundRow, sessionId: string, player: PlayerRow): string {
+  if (round.state !== "reading") {
+    throw new AppError(ERR.EXPIRED, 410, "This round is no longer active, so the speaker can't change.");
+  }
+  return withTx(db, () => {
+    const row = db
+      .prepare(
+        "SELECT * FROM speaker_transfers WHERE round_id = ? AND to_player_id = ? AND used_at IS NULL AND cancelled_at IS NULL",
+      )
+      .get(round.id, player.id) as { id: number; expires_at: number } | undefined;
+    if (!row || row.expires_at <= Date.now()) {
+      throw new AppError(ERR.EXPIRED, 410, "That speaker hand-off isn't available. Ask the organiser to authorize it again.");
+    }
+    // Atomic: acceptance consumes the authorization AND issues the new lease
+    // (which kills the old lease, bumping the fence). A second concurrent
+    // acceptance or a second issuance can't create two valid leases — the row
+    // is now used, and INSERT OR REPLACE in issueLease keeps a single lease row.
+    db.prepare("UPDATE speaker_transfers SET used_at = ? WHERE id = ?").run(Date.now(), row.id);
+    const token = issueLease(db, round.id, player, sessionId, Date.now());
+    return token;
   });
 }
 

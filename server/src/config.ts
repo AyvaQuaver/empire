@@ -29,12 +29,21 @@ try {
   // ignore .env problems; defaults apply
 }
 
-const nodeEnv = env("NODE_ENV", "development");
-const isProduction = nodeEnv === "production" || nodeEnv === "staging";
-
+const nodeEnvRaw = (process.env.EMPIRE_ENV ?? env("NODE_ENV", "development")).toLowerCase();
+// Explicit deployment-environment policy (EMPIRE_ENV, falling back to NODE_ENV):
+//  - development: local machine; file DB, dev defaults, dev outbox available
+//  - test: automated tests (in-memory DB); no dev outbox unless explicitly local
+//  - staging: deployed, realistic config REQUIRED (secrets + SMTP), no dev outbox
+//  - production: as staging
+export type DeploymentEnv = "development" | "test" | "staging" | "production";
+const DEPLOYMENT_ENVS: DeploymentEnv[] = ["development", "test", "staging", "production"];
+export const deploymentEnv: DeploymentEnv = DEPLOYMENT_ENVS.includes(nodeEnvRaw as DeploymentEnv)
+  ? (nodeEnvRaw as DeploymentEnv)
+  : "development";
+export const isProductionLike = deploymentEnv === "staging" || deploymentEnv === "production";
 export const config = {
-  nodeEnv,
-  isProduction,
+  nodeEnv: deploymentEnv,
+  isProduction: isProductionLike, // legacy alias: staging shares production hardening
   dbFile: env("EMPIRE_DB_FILE", "./data/empire.db"),
   port: Number(env("PORT", "8787")),
   appBaseUrl: env("APP_BASE_URL", "http://localhost:5173"),
@@ -50,9 +59,117 @@ export const config = {
     password: env("SMTP_PASSWORD"),
     from: env("EMAIL_FROM", "Empire <no-reply@localhost>"),
   },
-  allowDevEmailPreview: env("ALLOW_DEV_EMAIL_PREVIEW", "") === "true" && !isProduction,
+  allowDevEmailPreview: env("ALLOW_DEV_EMAIL_PREVIEW", "") === "true" && !isProductionLike,
   purgeInactivityHours: Number(env("PURGE_INACTIVITY_HOURS", "24")),
 };
+
+// ---- Startup configuration validation ------------------------------------
+// Staging/production refuse to start without real, stable configuration:
+// no defaults, no blanks, no obvious placeholders, no generated-on-boot secrets.
+const PLACEHOLDER_SECRETS = new Set([
+  "",
+  "dev-only-change-me",
+  "change-me",
+  "changeme",
+  "secret",
+  "placeholder",
+  "replace-me",
+  "replace_me",
+  "session-secret",
+  "12345678",
+  "password",
+]);
+
+export interface ConfigProblem {
+  area: string;
+  message: string; // never contains any secret VALUE
+}
+
+/**
+ * Validates the deployment configuration BEFORE accepting requests.
+ * Development/test are intentionally permissive (documented local defaults);
+ * staging/production fail closed.
+ */
+export interface DeploymentConfigInput {
+  deploymentEnv: DeploymentEnv;
+  sessionSecret?: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpPassword?: string;
+  smtpFrom?: string;
+  allowDevEmailPreview?: boolean;
+}
+
+/**
+ * Validates the deployment configuration BEFORE accepting requests.
+ * Development/test are intentionally permissive (documented local defaults);
+ * staging/production fail closed.
+ */
+export function validateDeploymentConfig(env: DeploymentConfigInput): ConfigProblem[] {
+  const problems: ConfigProblem[] = [];
+  const isProdLike = env.deploymentEnv === "staging" || env.deploymentEnv === "production";
+
+  // Contradictory configuration: the dev outbox can never be enabled outside
+  // development. (Staging must not be able to opt back in.)
+  if (env.allowDevEmailPreview && env.deploymentEnv !== "development") {
+    problems.push({
+      area: "ALLOW_DEV_EMAIL_PREVIEW",
+      message: "ALLOW_DEV_EMAIL_PREVIEW=true is only valid when EMPIRE_ENV=development. Remove it for staging/production.",
+    });
+  }
+
+  if (isProdLike) {
+    const secret = env.sessionSecret ?? "";
+    if (!secret || secret.trim() === "") {
+      problems.push({
+        area: "SESSION_SECRET",
+        message: "SESSION_SECRET is required for staging/production and must not be blank.",
+      });
+    } else if (PLACEHOLDER_SECRETS.has(secret.toLowerCase().trim())) {
+      problems.push({
+        area: "SESSION_SECRET",
+        message: "SESSION_SECRET is set to a placeholder value. Generate a unique secret (e.g. `openssl rand -base64 32`).",
+      });
+    }
+    // Email is required to support register-verification & password resets in
+    // deployed environments; require a complete SMTP configuration.
+    if (!env.smtpHost) {
+      problems.push({
+        area: "SMTP_HOST",
+        message: "SMTP_HOST is required for staging/production: account verification and password reset need real email delivery.",
+      });
+    }
+    if (env.smtpHost) {
+      const port = env.smtpPort ?? 0;
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        problems.push({ area: "SMTP_PORT", message: "SMTP_PORT must be a TCP port between 1 and 65535." });
+      }
+      if (!env.smtpFrom || !env.smtpFrom.includes("@")) {
+        problems.push({
+          area: "EMAIL_FROM",
+          message: "EMAIL_FROM is required and must be a valid mailbox address (must contain '@').",
+        });
+      }
+      if (!env.smtpUser || !env.smtpPassword) {
+        problems.push({
+          area: "SMTP_USER/SMTP_PASSWORD",
+          message: "SMTP_USER and SMTP_PASSWORD are required for authenticated sending in staging/production.",
+        });
+      }
+    }
+  } else {
+    // Development/test: the outbox may be turned on explicitly; contrived SMTP
+    // setups with a host but no sender are still rejected to avoid silent failures.
+    if (env.smtpHost && (!env.smtpFrom || !env.smtpFrom.includes("@"))) {
+      problems.push({
+        area: "EMAIL_FROM",
+        message: "EMAIL_FROM must be a valid mailbox address (must contain '@') when SMTP_HOST is set.",
+      });
+    }
+  }
+  return problems;
+}
 
 // Game rule constants.
 export const GAME = {
