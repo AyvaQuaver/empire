@@ -3,6 +3,7 @@ import type { RoomSnapshot } from "../../lib/api";
 import { api } from "../../lib/api";
 import { SpeechRunner, createBrowserAdapter, speechSupport, type RunStatus } from "../../lib/speech";
 import { Button, ErrorBanner, Panel, Avatar } from "../../components/ui";
+import { useSpeakerVoice, VoicePanel } from "../../components/VoicePanel";
 import { Page } from "../../App";
 
 type Act = (fn: () => Promise<unknown>) => () => Promise<void>;
@@ -119,34 +120,47 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
     });
   };
 
+  const chainRef = useRef<{ readingNumber: number; list: string[] } | null>(null);
+
   /* The normal flow is ONE tap: the reader announces "Reading N", speaks every
    * word of the saved order, then continues straight into the next saved
    * reading (fetching its word-only list with the leased header) until all
-   * three are done and the round moves to play. Stopping or failure ends the
-   * chain — recovery (restart the current reading, move devices) is manual,
-   * and nothing regenerates the shuffles or the starter. */
-  const runReadings = async (startReadingNumber: number, firstWords: string[]) => {
+   * three are done and the round moves to play. Pausing parks at an exact
+   * cursor (Resume continues it); stopping or failure ends the chain —
+   * recovery is manual, and nothing regenerates the shuffles or the starter. */
+  const runReadings = async (
+    startReadingNumber: number,
+    firstWords: string[],
+    resumeIndex: number | null = null,
+  ) => {
     const runner = runnerRef.current;
     if (!runner || !leaseRef.current) {
       setBusy(false);
       return;
     }
+    setBusy(true);
+    chainRef.current = { readingNumber: startReadingNumber, list: firstWords };
     setActionError(null);
     try {
       let readingNumber = startReadingNumber;
       let list = firstWords;
+      let cursor: number | null = resumeIndex;
       for (;;) {
         const result = await runner.run(readingNumber, list, {
           isCurrent: () => true,
           onWordComplete: ackFor(readingNumber),
           onReadingComplete: completeFor(readingNumber),
-        });
-        // "cancelled" (paused) or "failed": stop the chain. Recovery is manual
-        // and never regenerates the shuffled orders or the starter.
-        if (result !== "done" || readingNumber >= 3) break;
+        }, cursor);
+        cursor = null;
+        // "paused" parks at an exact cursor (Resume continues it); "cancelled"/
+        // "failed" stop the chain. Recovery is manual and never regenerates
+        // the shuffled orders or the starter.
+        if (result !== "done") break;
+        if (readingNumber >= 3) break;
         const next = readingNumber + 1;
         list = await fetchWords(leaseRef.current, next);
         readingNumber = next;
+        chainRef.current = { readingNumber, list };
       }
     } catch (err) {
       // Replay/cancellation safety: a lost or revoked lease (403 after a
@@ -169,6 +183,36 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
       setBusy(false);
     }
   };
+
+  /** Pause/resume UI continuation: mid-list resumes at the cursor; a boundary
+   * pause resumes with the NEXT reading's saved order (fetched via lease). */
+  const resumeReadings = () => {
+    const runner = runnerRef.current;
+    const chain = chainRef.current;
+    if (!runner || !chain) return;
+    const cursor = runner.cursorState;
+    if (cursor) {
+      void runReadings(cursor.readingNumber, chain.list, cursor.index);
+      return;
+    }
+    const next = chain.readingNumber + 1;
+    if (next > 3) {
+      void wrap(async () => undefined)();
+      return;
+    }
+    setBusy(true);
+    void fetchWords(leaseRef.current as string, next)
+      .then((nextWords: string[]) => {
+        setWords(nextWords);
+        return runReadings(next, nextWords);
+      })
+      .catch((err: unknown) => {
+        setActionError(err instanceof Error ? err.message : "Could not load the next reading.");
+        setBusy(false);
+      });
+  };
+
+  // (progress label refreshes via poll snapshot; no extra hook needed)
 
   // Organiser-approved speaker transfer: authorization from the organiser is
   // accepted here on the player's own device. Acceptance loads the saved word
@@ -207,13 +251,34 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
         setLeaseToken(out.leaseToken);
         leaseRef.current = out.leaseToken;
       }
-      setWords(out.words);
+      const loaded = out.words;
+      setWords(loaded);
+      // After the server resets the position, start the repeated reading with an
+      // explicit user action only (doRestart is invoked from the confirm dialog;
+      // the dialog's button IS that tap).
+      await runReadingsRef.current?.(currentReading, loaded);
     })();
   beTheSpeakerRef.current = beTheSpeaker;
   runReadingsRef.current = runReadings;
 
-  const paused = runnerRef.current?.running === false && status.phase !== "done" && readingStarted && words !== null && !busy;
-  void paused;
+  // Pause/resume: application-managed. Pause lands at the next utterance
+  // boundary; resume continues from the exact cursor. While paused, the lease
+  // is renewed so the page stays the authorized speaker.
+  useEffect(() => {
+    if (status.phase !== "paused") return;
+    const interval = window.setInterval(() => {
+      if (leaseRef.current) {
+        void api
+          .post(`/api/rounds/${snap.round.id}/lease`, { action: "renew", leaseToken: leaseRef.current })
+          .catch(() => undefined);
+      }
+    }, 60000);
+    return () => window.clearInterval(interval);
+  }, [status.phase, snap.round.id]);
+
+  // Voice selection lives on the SPEAKER device only (device-local list).
+  const speakerVoice = useSpeakerVoice(support.supported);
+  const { voiceBusy, voices, currentVoice, applyVoice, testVoice } = speakerVoice;
 
   if (!support.supported) {
     return (
@@ -349,21 +414,33 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
         <Panel heading="Your device is the speaker">
           <div className="audio-indicator">
             <span className={`disc ${phase === "speaking" || phase === "announcing" ? "speaking" : ""}`} />
-            {phase === "speaking"
-              ? "Speaking…"
-              : phase === "pausing"
-                ? "Pausing between words…"
-                : phase === "announcing"
-                  ? "Announcing…"
-                  : phase === "failed"
-                    ? "Paused."
-                    : "Ready."}
+            {phase === "pause-requested"
+              ? "Pausing after this word…"
+              : phase === "paused"
+                ? "Paused"
+                : phase === "speaking"
+                  ? "Speaking…"
+                  : phase === "pausing"
+                    ? "Pausing between words…"
+                    : phase === "announcing"
+                      ? "Announcing…"
+                      : phase === "failed"
+                        ? "Stopped."
+                        : phase === "done"
+                          ? "Reading finished."
+                          : "Ready."}
           </div>
           <ReadingProgressLine
-            readingNumber={currentReading}
+            readingNumber={
+              // a boundary pause has already completed this reading
+              phase === "paused" && runnerRef.current?.cursorState
+                ? runnerRef.current.cursorState.readingNumber
+                : currentReading
+            }
             position={status.wordIndex !== null ? status.wordIndex : (snap.reading?.position ?? 0)}
             total={words.length}
           />
+
           {(phase === "idle" || phase === "done") && (
             <Button
               className="btn-primary btn-cta"
@@ -374,34 +451,53 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
               {phase === "done" ? " (next one)" : ""}
             </Button>
           )}
-          {(phase === "speaking" || phase === "pausing" || phase === "announcing") && (
-            <Button
-              className="btn-secondary btn-cta"
-              onClick={() => {
-                runnerRef.current?.cancel();
-              }}
-            >
-              Pause (this repeats the reading)
+
+          {(phase === "speaking" || phase === "announcing" || phase === "pause-requested" || phase === "pausing") && (
+            // PAUSE while playing: the current word/announcement finishes, then
+            // everything stops at the next utterance boundary.
+            <Button className="btn-secondary btn-cta" onClick={() => runnerRef.current?.requestPause()}>
+              Pause
             </Button>
           )}
+
+          {phase === "paused" && (
+            <>
+              <Button className="btn-primary btn-cta" loading={busy} onClick={resumeReadings}>
+                Resume
+              </Button>
+              {/* secondary: repeating the current reading uses its saved order */}
+              <Button className="btn-ghost" onClick={() => setRestartWarn(true)}>
+                Restart this reading
+              </Button>
+            </>
+          )}
+
           {phase === "failed" && (
             <>
-              <ErrorBanner error="Speaking stopped unexpectedly. The saved order is safe — restart to repeat it, or move to another speaker device." />
+              <ErrorBanner error="Speaking stopped unexpectedly. The saved order is safe — restart this reading, or move to another speaker device." />
               <Button
                 className="btn-primary btn-cta"
                 onClick={() => {
                   setRestartWarn(true);
                 }}
               >
-                Restart this reading (same saved order)
+                Restart this reading (saved order)
               </Button>
             </>
           )}
+
           <p className="status-text">
-            If this device can't speak, tap "Test sound" first; then take the speaker role on another device — that
-            stops the audio here and the readings continue there in the same saved order. No words are ever shown or
-            shared on any screen.
+            Pause keeps your place; resume continues at the exact next word. "Restart this reading" repeats the saved
+            order from the beginning. No words are ever shown or shared on any screen.
           </p>
+
+          <VoicePanel
+            voices={voices}
+            currentLabel={currentVoice?.label ?? null}
+            disabled={phase === "speaking" || phase === "announcing" || phase === "pause-requested" || voiceBusy}
+            onApply={applyVoice}
+            onTest={() => testVoice((message) => setActionError(message))}
+          />
         </Panel>
       )}
 
@@ -477,3 +573,4 @@ function ReadingProgressLine({ readingNumber, position, total }: { readingNumber
     </p>
   );
 }
+

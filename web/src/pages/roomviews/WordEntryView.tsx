@@ -3,6 +3,7 @@ import type { RoomSnapshot } from "../../lib/api";
 import { api } from "../../lib/api";
 import { speechSupport, createBrowserAdapter } from "../../lib/speech";
 import { Avatar, Button, ErrorBanner, Field, Input, Panel, ReadyBadge } from "../../components/ui";
+import { useSpeakerVoice, VoicePanel } from "../../components/VoicePanel";
 import { Page } from "../../App";
 
 type Act = (fn: () => Promise<unknown>) => () => Promise<void>;
@@ -67,6 +68,9 @@ export function WordEntryView({ snap, error, act }: { snap: RoomSnapshot; error:
   };
 
   const support = speechSupport();
+  // The organiser's ready-to-read device is the initial speaker device: this is
+  // where the spec wants voice & accent selection, before the readings start.
+  const speakerVoice = useSpeakerVoice(support.supported);
   const testSound = async () => {
     setSpeakingTest(true);
     try {
@@ -164,6 +168,15 @@ export function WordEntryView({ snap, error, act }: { snap: RoomSnapshot; error:
             <Button className="btn-secondary btn-cta" onClick={catchable(testSound)} loading={speakingTest}>
               Test sound
             </Button>
+          )}
+          {support.supported && (
+            <VoicePanel
+              voices={speakerVoice.voices}
+              currentLabel={speakerVoice.currentVoice?.label ?? null}
+              disabled={speakerVoice.voiceBusy || speakingTest}
+              onApply={speakerVoice.applyVoice}
+              onTest={() => speakerVoice.testVoice(setFieldError)}
+            />
           )}
           <p className="status-text" style={{ margin: 0, textAlign: "center" }}>
             Turn up your volume and keep this screen open.

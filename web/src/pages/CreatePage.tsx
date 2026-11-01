@@ -66,18 +66,46 @@ export default function CreatePage() {
                 aria-label="Game name (optional)"
               />
             </Field>
-            <Field label="Genre" hint="The group chooses words that fit this genre.">
-              <Input value={genre} onChange={(e) => setGenre(e.target.value)} required maxLength={60} />
+            <Field label="Genre" hint="Choose a suggestion or enter your own — words fit this genre.">
+              <Input
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                required
+                maxLength={60}
+                aria-label="Genre"
+                placeholder="e.g. Animals"
+              />
             </Field>
-            <ul style={{ listStyle: "none", display: "flex", flexWrap: "wrap", gap: 8, margin: 0, padding: 0 }}>
-              {SUGGESTED_GENRES.map((g) => (
-                <li key={g}>
-                  <Button type="button" className="btn-small btn-secondary" onClick={() => setGenre(g)}>
-                    {g}
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            {/* Suggestions, not a fixed list: chips fill the editable field above
+                and the selection clears itself when the value is changed. */}
+            <div aria-label="Genre suggestions" style={{ marginTop: -8 }}>
+              <ul
+                style={{
+                  listStyle: "none",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  margin: 0,
+                  padding: 0,
+                }}
+              >
+                {SUGGESTED_GENRES.map((g) => {
+                  const selected = genre.trim().toLowerCase() === g.toLowerCase();
+                  return (
+                    <li key={g}>
+                      <button
+                        type="button"
+                        className={`chip${selected ? " chip-selected" : ""}`}
+                        aria-pressed={selected}
+                        onClick={() => setGenre(selected ? "" : g)}
+                      >
+                        {g}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
             <ErrorBanner error={error} />
             <Button type="submit" className="btn-primary btn-cta" loading={loading}>
               Create game

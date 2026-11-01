@@ -91,7 +91,10 @@ export function PlayingView({ snap, error, act }: { snap: RoomSnapshot; error: s
           <p style={{ fontSize: 20 }}>
             <strong>{winnerName}</strong> wins {snap.room.genre}?
           </p>
-          <p className="status-text">Results are organiser-reported. You'll be able to correct this later.</p>
+          <p className="status-text">
+            Results are organiser-reported and can be corrected later. Saving reveals this player's word with the
+            result for 24 hours and deletes everyone's words.
+          </p>
           <Button
             className="btn-primary"
             onClick={() =>
