@@ -9,7 +9,7 @@
 #   1. process is node.exe
 #   2. command line contains the EXACT instance env file: --env-file=C:/Empire/shared/<instance>.env
 #   3. command line contains the tsx loader rooted at THIS instance's current release path
-#      (C:\Empire\releases\<instance>\<current-sha>\...) — verified against active-release-<instance>.txt
+#      (C:\Empire\releases\<instance>\<current-sha>\...) - verified against active-release-<instance>.txt
 #   4. command line contains NO reference to C:\Collectz or to the OTHER instance's env file
 # A mismatch of any rule means the script ABORTS WITHOUT ACTION.
 param(
@@ -49,7 +49,7 @@ Write-Output "matched $($candidates.Count) process(es) for instance=$Instance"
 $portOwner = Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -eq $Port } | Select-Object -First 1
 if($portOwner){
   $owning = Get-CimInstance Win32_Process -Filter "ProcessId=$($portOwner.OwningProcess)"
-  if(-not (Is-EmpireInstance $owning $Instance)){ throw "port $Port is owned by a process that does not belong to empire/$Instance — aborting" }
+  if(-not (Is-EmpireInstance $owning $Instance)){ throw "port $Port is owned by a process that does not belong to empire/$Instance - aborting" }
   Write-Output ("port listener: pid=$($owning.ProcessId) verified as empire/$Instance")
 } else {
   Write-Output "port listener: none (instance likely stopped)"
@@ -65,7 +65,7 @@ foreach($p in $candidates){
 }
 
 $total = $candidates.Count
-if($total -eq 0 -and -not $portOwner){ throw "no empire/$Instance process nor port listener found — nothing to act on" }
+if($total -eq 0 -and -not $portOwner){ throw "no empire/$Instance process nor port listener found - nothing to act on" }
 
 if($Restart){
   if(-not $ConfirmStop){

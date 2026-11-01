@@ -1,4 +1,4 @@
-# Empire deploy for Windows (one instance) — mirrors the Collectz release model.
+# Empire deploy for Windows (one instance) - mirrors the Collectz release model.
 #   powershell -File deploy.ps1 -Instance staging
 #   powershell -File deploy.ps1 -Instance production -Ref origin/codex/empire-mvp
 # Runs the full check suite, archives the pinned ref into releases\<sha>, swaps

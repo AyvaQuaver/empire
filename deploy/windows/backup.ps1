@@ -1,5 +1,5 @@
 # SQLite-consistent online backup for one Empire instance, Windows-native.
-# Uses the SQLite online backup API (VACUUM INTO) through node:sqlite — a clean
+# Uses the SQLite online backup API (VACUUM INTO) through node:sqlite - a clean
 # self-contained snapshot while the service keeps running.
 #   powershell -File backup.ps1 -Instance staging
 #   powershell -File backup.ps1 -Instance staging -RestoreVerify <file>
