@@ -17,6 +17,9 @@ interface SessionCtx {
   username: string | null;
   emailVerified: boolean;
   loading: boolean;
+  /** Server-declared capability flag (guest preview disables accounts). */
+  accountsEnabled: boolean | null;
+  accountsNotice: string | null;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -26,6 +29,8 @@ const SessionContext = createContext<SessionCtx>({
   username: null,
   emailVerified: false,
   loading: true,
+  accountsEnabled: null,
+  accountsNotice: null,
   refresh: async () => undefined,
   signOut: async () => undefined,
 });
@@ -40,16 +45,33 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
     username: string | null;
     emailVerified: boolean;
     loading: boolean;
-  }>({ signedIn: false, username: null, emailVerified: false, loading: true });
+    accountsEnabled: boolean | null;
+    accountsNotice: string | null;
+  }>({
+    signedIn: false,
+    username: null,
+    emailVerified: false,
+    loading: true,
+    accountsEnabled: null,
+    accountsNotice: null,
+  });
 
   const refresh = useCallback(async () => {
     try {
+      // Capabilities first: the server says whether accounts are available
+      // (guest preview). No configuration or secrets are exposed.
+      const caps = await api
+        .get<{ accountsEnabled: boolean | null; accountsNotice: string | null }>("/api/capabilities")
+        .catch(() => ({ accountsEnabled: null as boolean | null, accountsNotice: null as string | null }));
+      localStorage.setItem("empire.accounts", caps.accountsEnabled === false ? "false" : "true");
       const me = await api.get<MeResponse>("/api/me");
       setState({
         signedIn: me.signedIn,
         username: me.user?.username ?? null,
         emailVerified: me.user?.emailVerified ?? false,
         loading: false,
+        accountsEnabled: caps.accountsEnabled,
+        accountsNotice: caps.accountsNotice,
       });
     } catch {
       setState((s) => ({ ...s, loading: false }));

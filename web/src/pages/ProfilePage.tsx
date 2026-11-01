@@ -62,13 +62,26 @@ export function ProfilePage() {
     return (
       <Page>
         <h1 style={{ fontSize: 28 }}>Your profile</h1>
-        <p>Sign in to see your game history, stats and friends. Playing as a guest doesn't need an account.</p>
-        <Link to="/sign-in" className="btn btn-primary">
-          Sign in
-        </Link>
-        <Link to="/register" className="btn btn-secondary">
-          Create an account
-        </Link>
+        {session.accountsEnabled === false ? (
+          <>
+            <p className="status-text" role="status">
+              Guest preview — accounts are not available yet. You can play as a guest.
+            </p>
+            <Link to="/" className="btn btn-primary">
+              Play a game
+            </Link>
+          </>
+        ) : (
+          <>
+            <p>Sign in to see your game history, stats and friends. Playing as a guest doesn't need an account.</p>
+            <Link to="/sign-in" className="btn btn-primary">
+              Sign in
+            </Link>
+            <Link to="/register" className="btn btn-secondary">
+              Create an account
+            </Link>
+          </>
+        )}
       </Page>
     );
   }

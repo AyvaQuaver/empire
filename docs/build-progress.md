@@ -4,18 +4,21 @@ Date: 2026-11-01 · branch: `codex/empire-mvp` (repo: github.com/AyvaQuaver/empi
 
 ## Temp shared URL (2026-11-01)
 
-A **temporary** public URL is available for review:
-`https://20357f4a099d96.lhr.life` — a localhost.run SSH tunnel to a locally run
-single-instance server (`npm run build` output served by Express; SQLite file
-`./data/empire.db` on this machine). Verified end-to-end over the public URL:
-room create/join/lock/private words/snapshot privacy (stranger sees nothing, own
-word only), lease-gated word-only reading payload, results + history. Runs in
-`EMPIRE_ENV=development`-equivalent mode because no SMTP credentials exist yet
-(nothing purchased): guest play is fully functional; register/verification/reset
-emails can't be delivered. **The URL lives only while this machine's tunnel stays
-up, and the free tunnel rotates its subdomain on every reconnect** (stale URLs
-502) — it is not a cloud deployment and SQLite + account data remain local. If the
-URL goes dark, ask for it to be restarted; it is two commands (see below).
+A **temporary** public URL is available for review, now in explicit **guest-preview**
+mode: `https://cb01ea7eaf3ea2.lhr.life` — a localhost.run SSH tunnel (`127.0.0.1`
+forwarding — plain `localhost` mixed ::1/IPv4 resolution caused intermittent 502s
+before) to a locally run single-instance server (`EMPIRE_ENV=staging` +
+`AUTH_ACCOUNTS_ENABLED=false` + stable random secret; SQLite file
+`./data/empire.db` on this machine). Responses are gzip-compressed (~3× smaller).
+
+Verified over this URL: home shows "Guest preview — accounts are not available yet."
+(Sign in CTA hidden); `POST /api/auth/*`, friends and invites → **403 server-side**
+with the preview message; `GET /api/dev/outbox` → **404** (route removed);
+`GET /api/capabilities` exposes only the safe flag; `Cache-Control: no-store` +
+`X-Robots-Tag: noindex` intact; guest lobby/QR/invite link work. A full guest
+multiplayer smoke test passed earlier on the tunnel (create → joins → duplicate-word
+conflict (neutral) → readings → winner → guest stats via session identity), and
+snapshots never contained other players' words.
 
 To run the same demo locally/on any machine:
 
@@ -27,6 +30,43 @@ ssh -R 80:localhost:8787 nokey@localhost.run        # prints the temporary https
 # then restart the server with APP_BASE_URL=<printed url> so QR/invite links match
 ```
 
+## 000. Third review round (2026-11-01)
+
+1. **Dev outbox route removed** (`api.ts`): the browser-accessible
+   `GET /api/dev/outbox` is gone entirely; replaced by the local CLI
+   `npm run email:outbox` (`scripts/email-outbox.ts`), which refuses to run outside
+   `EMPIRE_ENV=development` without the explicit flag. Verified 404 on the public
+   URL. **Exposure assessment**, from direct inspection: the public DB had **0
+   users / 0 email_tokens / 0 outbox rows** and the flag was never set on the
+   tunneled instance — nothing could have leaked; no exposure window established.
+   Migration `0003` defensively purged any stored email bodies from prior
+   fixture runs and disarmed unused unexpired tokens; accounts/history untouched.
+   Docs claiming the route was "local machine only" were corrected (tunnels make
+   "local" reachable; environment flags are not authorization).
+2. **SMTP-metadata split** (`email.ts`, migration `0003b`): the SMTP path now
+   persists only `email_delivery_log` rows (kind/status/safe error identifier);
+   bodies, subjects, recipients and token URLs live in memory only. Raw SMTP
+   errors are reduced to their error name. Dev-fixture body storage exists only
+   in explicit development (or the `test` DB fixture); an injected test transport
+   replaces browser-readable previews for automation. New tests cover SMTP-
+   configured staging semantics (sent + metadata only), failure logging (safe
+   code, no token/host echo), and dev-fixture gating.
+3. **Strict environment resolution** (`config.ts` `resolveDeploymentEnv`):
+   explicit `EMPIRE_ENV`/`NODE_ENV` values must name a supported environment —
+   misspellings ("stagng"), blanks, whitespace are refused at boot (before the
+   DB opens); precedence EMPIRE_ENV > NODE_ENV; default development applies only
+   when neither variable is supplied. Spawn tests prove a misspelled env refuses
+   boot and that staging+guest-preview (no SMTP) boots successfully.
+4. **Guest-preview mode** (`AUTH_ACCOUNTS_ENABLED=false`): register/sign-in/
+   verify/resend/forgot/reset/delete/friends/search/requests/invites are refused
+   SERVER-side (403, "Guest preview — accounts are not available yet."), guest
+   play is fully intact, existing accounts stay put, and the frontend switches on
+   a safe `GET /api/capabilities` flag (home Sign-in CTA replaced by the notice;
+   auth/profile/friends pages show the notice instead of forms).
+5. **gzip compression** (app.ts, `compression`): hashed static assets shrink
+   ~3×; tunnels/proxies transfer them reliably.
+6. Public instance now runs `EMPIRE_ENV=staging` + `AUTH_ACCOUNTS_ENABLED=false`
+   (development mode is no longer used to bypass public-deployment protections).
 
 ## 00. Second review round (2026-11-01)
 

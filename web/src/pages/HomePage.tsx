@@ -23,6 +23,10 @@ export default function HomePage() {
       <nav className="footer-links" aria-label="Account">
         {session.loading ? (
           <span className="skeleton" />
+        ) : session.accountsEnabled === false ? (
+          <p className="status-text" style={{ margin: 0 }} role="status">
+            Guest preview — accounts are not available yet.
+          </p>
         ) : session.signedIn ? (
           <Link to="/profile" className="btn-ghost" style={{ minHeight: 44 }}>
             {session.username}

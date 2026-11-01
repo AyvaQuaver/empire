@@ -65,12 +65,23 @@ export default function FriendsPage() {
     return (
       <Page>
         <h1 style={{ fontSize: 28 }}>Friends</h1>
-        <p>
-          Friends are an account feature. You can still play as a guest any time.
-        </p>
-        <Button className="btn-primary btn-cta" onClick={() => navigate("/sign-in")}>
-          Sign in
-        </Button>
+        {session.accountsEnabled === false ? (
+          <>
+            <p className="status-text" role="status" style={{ textAlign: "center" }}>
+              Guest preview — accounts are not available yet. You can play as a guest.
+            </p>
+            <Button className="btn-primary btn-cta" onClick={() => navigate("/")}>
+              Play a game
+            </Button>
+          </>
+        ) : (
+          <>
+            <p>Friends are an account feature. You can still play as a guest any time.</p>
+            <Button className="btn-primary btn-cta" onClick={() => navigate("/sign-in")}>
+              Sign in
+            </Button>
+          </>
+        )}
         <Button className="btn-ghost" onClick={() => navigate("/")}>
           Back home
         </Button>

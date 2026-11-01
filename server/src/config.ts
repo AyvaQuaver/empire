@@ -29,21 +29,79 @@ try {
   // ignore .env problems; defaults apply
 }
 
-const nodeEnvRaw = (process.env.EMPIRE_ENV ?? env("NODE_ENV", "development")).toLowerCase();
-// Explicit deployment-environment policy (EMPIRE_ENV, falling back to NODE_ENV):
-//  - development: local machine; file DB, dev defaults, dev outbox available
-//  - test: automated tests (in-memory DB); no dev outbox unless explicitly local
-//  - staging: deployed, realistic config REQUIRED (secrets + SMTP), no dev outbox
-//  - production: as staging
 export type DeploymentEnv = "development" | "test" | "staging" | "production";
 const DEPLOYMENT_ENVS: DeploymentEnv[] = ["development", "test", "staging", "production"];
-export const deploymentEnv: DeploymentEnv = DEPLOYMENT_ENVS.includes(nodeEnvRaw as DeploymentEnv)
-  ? (nodeEnvRaw as DeploymentEnv)
-  : "development";
+
+export interface ResolvedEnv {
+  /** null when neither variable was explicitly supplied → documented default. */
+  decided: DeploymentEnv | null;
+  /** Value that was explicitly supplied but is not a supported environment name. */
+  invalid?: string;
+  /** Which variable produced the decision/invalid value. */
+  source?: "EMPIRE_ENV" | "NODE_ENV" | "default";
+}
+
+/**
+ * Strict environment resolution:
+ *  1. An explicitly supplied EMPIRE_ENV decides — but ONLY if it names a
+ *     supported environment. Any other (including blank/whitespace) value is
+ *     REJECTED, never silently mapped to development.
+ *  2. Otherwise an explicitly supplied NODE_ENV is used under the same rule.
+ *  3. If neither variable is supplied, the documented local default
+ *     `development` applies.
+ */
+export function resolveDeploymentEnv(
+  empireEnv: string | undefined,
+  nodeEnv: string | undefined,
+): ResolvedEnv {
+  const parse = (raw: string): DeploymentEnv | null =>
+    DEPLOYMENT_ENVS.includes(raw.trim().toLowerCase() as DeploymentEnv) ? (raw.trim().toLowerCase() as DeploymentEnv) : null;
+  if (empireEnv !== undefined) {
+    const v = parse(empireEnv);
+    if (v) return { decided: v, source: "EMPIRE_ENV" };
+    return { decided: null, invalid: empireEnv, source: "EMPIRE_ENV" };
+  }
+  if (nodeEnv !== undefined) {
+    const v = parse(nodeEnv);
+    if (v) return { decided: v, source: "NODE_ENV" };
+    return { decided: null, invalid: nodeEnv, source: "NODE_ENV" };
+  }
+  return { decided: "development", source: "default" };
+}
+
+const moduleRootEnv = resolveDeploymentEnv(process.env.EMPIRE_ENV, process.env.NODE_ENV);
+// When environment resolution FAILED, boot is refused by validateDeploymentConfig
+// (problems include the invalid setting); the placeholder below is never used out
+// of the box because index.ts stops before createApp.
+export const deploymentEnv: DeploymentEnv = moduleRootEnv.decided ?? "development";
+export const envResolutionProblems: string[] =
+  moduleRootEnv.invalid !== undefined
+    ? [
+        `EMPIRE_ENV/NODE_ENV was set to an unsupported value ("${moduleRootEnv.invalid.length > 40 ? moduleRootEnv.invalid.slice(0, 40) + "…" : moduleRootEnv.invalid}") via ${moduleRootEnv.source}; supported values are ${DEPLOYMENT_ENVS.join(", ")}.`,
+      ]
+    : [];
 export const isProductionLike = deploymentEnv === "staging" || deploymentEnv === "production";
+
+// ---- Guest-preview account flag -------------------------------------------
+// AUTH_ACCOUNTS_ENABLED=false makes the deployment explicitly guest-only:
+// register/sign-in/reset/verification/google-free, account-only social features
+// are refused server-side. Guests can play everything. Accounts stay in place
+// (nothing is deleted); re-enabling restores the flows.
+const rawAccountsFlag = process.env.AUTH_ACCOUNTS_ENABLED;
+let accountsFlagProblem: string | null = null;
+let authAccountsEnabled = true;
+if (rawAccountsFlag === "false") authAccountsEnabled = false;
+else if (rawAccountsFlag === "true" || rawAccountsFlag === undefined || rawAccountsFlag === "") authAccountsEnabled = true;
+else
+  accountsFlagProblem =
+    "AUTH_ACCOUNTS_ENABLED must be `true` or `false` (unset means true).";
+
 export const config = {
   nodeEnv: deploymentEnv,
+  deploymentEnv, // explicit alias for readability
   isProduction: isProductionLike, // legacy alias: staging shares production hardening
+  authAccountsEnabled,
+  accountsFlagProblem, // surfaced by validateDeploymentConfig; null when OK
   dbFile: env("EMPIRE_DB_FILE", "./data/empire.db"),
   port: Number(env("PORT", "8787")),
   appBaseUrl: env("APP_BASE_URL", "http://localhost:5173"),
@@ -92,6 +150,10 @@ export interface ConfigProblem {
  */
 export interface DeploymentConfigInput {
   deploymentEnv: DeploymentEnv;
+  /** Pre-resolved environment problems (e.g. an invalid EMPIRE_ENV value). */
+  envProblems?: readonly string[];
+  /** Invalid AUTH_ACCOUNTS_ENABLED value, surfaced as a config problem. */
+  accountsFlagProblem?: string | null;
   sessionSecret?: string;
   smtpHost?: string;
   smtpPort?: number;
@@ -99,6 +161,8 @@ export interface DeploymentConfigInput {
   smtpPassword?: string;
   smtpFrom?: string;
   allowDevEmailPreview?: boolean;
+  /** Guest preview explicitly disables account features (innate SMTP relaxation). */
+  authAccountsEnabled?: boolean;
 }
 
 /**
@@ -110,6 +174,15 @@ export function validateDeploymentConfig(env: DeploymentConfigInput): ConfigProb
   const problems: ConfigProblem[] = [];
   const isProdLike = env.deploymentEnv === "staging" || env.deploymentEnv === "production";
 
+  // Invalid environment names/flags fail the boot outright in any environment.
+  for (const msg of env.envProblems ?? []) {
+    problems.push({ area: "EMPIRE_ENV", message: msg });
+  }
+  if (env.accountsFlagProblem) {
+    problems.push({ area: "AUTH_ACCOUNTS_ENABLED", message: env.accountsFlagProblem });
+  }
+  // Public-facing deployments (staging/production) always require a stable secret,
+  // even in guest-preview mode with accounts disabled.
   // Contradictory configuration: the dev outbox can never be enabled outside
   // development. (Staging must not be able to opt back in.)
   if (env.allowDevEmailPreview && env.deploymentEnv !== "development") {
@@ -119,8 +192,8 @@ export function validateDeploymentConfig(env: DeploymentConfigInput): ConfigProb
     });
   }
 
+  const secret = env.sessionSecret ?? "";
   if (isProdLike) {
-    const secret = env.sessionSecret ?? "";
     if (!secret || secret.trim() === "") {
       problems.push({
         area: "SESSION_SECRET",
@@ -132,12 +205,14 @@ export function validateDeploymentConfig(env: DeploymentConfigInput): ConfigProb
         message: "SESSION_SECRET is set to a placeholder value. Generate a unique secret (e.g. `openssl rand -base64 32`).",
       });
     }
-    // Email is required to support register-verification & password resets in
-    // deployed environments; require a complete SMTP configuration.
-    if (!env.smtpHost) {
+    const accountsEnabled = env.authAccountsEnabled ?? true;
+    // Email is REQUIRED for register-verification & password resets whenever
+    // accounts are available in a deployed environment. A guest-only preview
+    // (accounts disabled) does not need SMTP.
+    if (accountsEnabled && !env.smtpHost) {
       problems.push({
         area: "SMTP_HOST",
-        message: "SMTP_HOST is required for staging/production: account verification and password reset need real email delivery.",
+        message: "SMTP_HOST is required for staging/production with accounts enabled: verification and password reset need real email delivery. Set AUTH_ACCOUNTS_ENABLED=false for a guest-only preview.",
       });
     }
     if (env.smtpHost) {

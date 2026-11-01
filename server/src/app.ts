@@ -1,4 +1,5 @@
 import express from "express";
+import compression from "compression";
 import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
@@ -22,6 +23,9 @@ export function createApp(overrides?: { dbFile?: string; port?: number }): AppHa
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
+  // gzip: hashed static assets shrink ~3x (matters on slow proxies/tunnels);
+  // JSON API responses too. Private responses still carry no-store.
+  app.use(compression());
 
   // Body limits: game APIs take small JSON payloads only.
   app.use(express.json({ limit: "16kb" }));

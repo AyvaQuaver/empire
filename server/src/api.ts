@@ -40,9 +40,27 @@ export function buildRouter(db: DB): Router {
     res.json({ ok: true, service: "empire-api" });
   });
 
+  // -- capabilities (safe, no secrets/config) ------------------------------
+  router.get("/capabilities", (_req, res) => {
+    res.json({
+      accountsEnabled: config.authAccountsEnabled,
+      accountsNotice: config.authAccountsEnabled ? null : "Guest preview — accounts are not available yet.",
+    });
+  });
+
   // -- auth --------------------------------------------------------------
+  const requireAccountsEnabled = () => {
+    if (config.authAccountsEnabled) return;
+    throw new AppError(
+      ERR.FORBIDDEN,
+      403,
+      "Guest preview — accounts are not available yet. You can play as a guest.",
+    );
+  };
+
   router.post("/auth/register", async (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       rateLimitOr429(`auth:ip:${req.ip}`, 20, 15 * 60 * 1000);
       const user = await authService.register(db, s.id, {
@@ -58,6 +76,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/auth/sign-in", async (req, res, next) => {
     try {
+      requireAccountsEnabled();
       rateLimitOr429(`auth:ip:${req.ip}`, 20, 15 * 60 * 1000);
       const out = await authService.signIn(db, {
         username: String(req.body?.username ?? ""),
@@ -85,6 +104,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/auth/verify", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       authService.verifyEmail(db, String(req.body?.token ?? ""));
       res.json({ ok: true });
     } catch (err) {
@@ -94,6 +114,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/auth/resend-verification", async (req, res, next) => {
     try {
+      requireAccountsEnabled();
       await authService.resendVerification(db, sessionIdOf(req));
       res.json({ ok: true });
     } catch (err) {
@@ -103,6 +124,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/auth/forgot-password", async (req, res, next) => {
     try {
+      requireAccountsEnabled();
       rateLimitOr429(`forgot:ip:${req.ip}`, 8, 15 * 60 * 1000);
       await authService.forgotPassword(db, String(req.body?.usernameOrEmail ?? ""));
       res.json({ ok: true, message: "If that account exists, we've sent a reset link." });
@@ -113,6 +135,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/auth/reset-password", async (req, res, next) => {
     try {
+      requireAccountsEnabled();
       rateLimitOr429(`reset:ip:${req.ip}`, 10, 15 * 60 * 1000);
       await authService.resetPassword(db, String(req.body?.token ?? ""), String(req.body?.password ?? ""));
       res.json({ ok: true });
@@ -123,6 +146,7 @@ export function buildRouter(db: DB): Router {
 
   router.delete("/auth/account", async (req, res, next) => {
     try {
+      requireAccountsEnabled();
       // Password re-authentication: the signed-in session alone can't delete an account.
       const password = String(req.body?.password ?? "");
       await authService.deleteAccount(db, sessionIdOf(req), password);
@@ -503,15 +527,18 @@ export function buildRouter(db: DB): Router {
 
   // -- friends & invites -------------------------------------------------
   router.get("/friends", (req, res) => {
+    requireAccountsEnabled();
     res.json({ friends: friendsService.friendsOf(db, sessionIdOf(req)) });
   });
 
   router.get("/friends/requests", (req, res) => {
+    requireAccountsEnabled();
     res.json({ requests: friendsService.friendRequestsFor(db, sessionIdOf(req)) });
   });
 
   router.post("/friends/search", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       rateLimitOr429(`search:session:${s.id}`, 20, 60 * 1000);
       res.json(friendsService.searchUsername(db, s.id, String(req.body?.username ?? "")));
@@ -522,6 +549,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/friends/requests", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       rateLimitOr429(`frequest:session:${s.id}`, 10, 60 * 1000);
       const username = String(req.body?.username ?? "");
@@ -538,6 +566,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/friends/requests/:id/respond", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       const accept = req.body?.accept === true;
       friendsService.respondFriendRequest(db, s.id, Number(req.params.id), accept);
@@ -549,6 +578,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/friends/requests/:id/cancel", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       friendsService.cancelFriendRequest(db, s.id, Number(req.params.id));
       res.json({ ok: true });
@@ -559,6 +589,7 @@ export function buildRouter(db: DB): Router {
 
   router.delete("/friends/:userId", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       // removeFriend resolves the caller's user id from the session internally.
       friendsService.removeFriend(db, s.id, String(req.params.userId));
@@ -570,6 +601,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/rooms/:code/invites", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       const room = roomByParam(req);
       const player = roomsService.requireMember(db, room, s.id);
@@ -584,6 +616,7 @@ export function buildRouter(db: DB): Router {
   });
 
   router.get("/invites", (req, res) => {
+  requireAccountsEnabled();
     const s = requireSession(req);
     if (!s.user_id) {
       res.json({ invites: [] });
@@ -594,6 +627,7 @@ export function buildRouter(db: DB): Router {
 
   router.post("/invites/:id/accept", (req, res, next) => {
     try {
+      requireAccountsEnabled();
       const s = requireSession(req);
       const out = friendsService.acceptRoomInvite(db, s.id, Number(req.params.id));
       res.json({ ok: true, roomCode: out.roomCode });
@@ -602,18 +636,11 @@ export function buildRouter(db: DB): Router {
     }
   });
 
-  // -- dev-only email outbox preview --------------------------------------------------
-  // Strictly development-only: EMPIRE_ENV must be "development" AND the flag must
-  // be explicitly set. Staging/production can never enable this (validated at
-  // startup too), and it is never reachable in the browser over the network there.
-  if (config.nodeEnv === "development" && config.allowDevEmailPreview) {
-    router.get("/dev/outbox", (_req, res) => {
-      const rows = db
-        .prepare("SELECT id, to_email, subject, body, created_at FROM email_outbox ORDER BY id DESC LIMIT 50")
-        .all() as { id: number; to_email: string; subject: string; body: string; created_at: number }[];
-      res.json({ messages: rows });
-    });
-  }
+  // The dev email outbox is NOT browser-accessible. It was removed: a tunnel or
+  // proxy makes "local server" reachable from anywhere, and environment flags
+  // are not a substitute for authorization. Use the local CLI instead:
+  //   ALLOW_DEV_EMAIL_PREVIEW=true npm run email:outbox
+  // (see scripts/email-outbox.ts — it refuses to run outside local development).
 
   // Cleanup can also be triggered manually (CRON in staging hits POST /internal/cleanup
   // only when CLEANUP_TOKEN matches; no token = 404).

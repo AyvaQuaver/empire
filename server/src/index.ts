@@ -1,11 +1,14 @@
-import { config, validateDeploymentConfig } from "./config.js";
+import { config, envResolutionProblems as configEnvProblems, validateDeploymentConfig } from "./config.js";
 import { createApp } from "./app.js";
 
 async function main(): Promise<void> {
   // Validate configuration before accepting any request. Problems are reported
   // without printing secret values; the process exits non-zero.
   const problems = validateDeploymentConfig({
-    deploymentEnv: config.nodeEnv,
+    deploymentEnv: config.deploymentEnv,
+    envProblems: configEnvProblems,
+    accountsFlagProblem: config.accountsFlagProblem,
+    authAccountsEnabled: config.authAccountsEnabled,
     sessionSecret: config.sessionSecret,
     smtpHost: config.smtp.host,
     smtpPort: config.smtp.port,
@@ -15,7 +18,7 @@ async function main(): Promise<void> {
     allowDevEmailPreview: config.allowDevEmailPreview,
   });
   if (problems.length > 0) {
-    console.error(`[empire] refusing to start (EMPIRE_ENV=${config.nodeEnv}); configuration problems:`);
+    console.error(`[empire] refusing to start (EMPIRE_ENV=${config.deploymentEnv}); configuration problems:`);
     for (const p of problems) console.error(`  - [${p.area}] ${p.message}`);
     process.exit(1);
   }

@@ -147,14 +147,22 @@ Verified by `cleanup.test.ts` and `roster-retention.test.ts`.
   nulled, friendships/requests/tokens/sessions/user row deleted, result audit rows
   keep non-personal history.
 - **Logs:** the server never logs words, tokens, cookies or passwords. The
-  development outbox console line (recipient + subject only) exists only when
-  SMTP is unset AND `NODE_ENV` is not production/staging (see below).
-- **Dev email outbox isolation:** `deliverEmail` stores to `email_outbox` and logs
-  only in non-production; **in production/staging with SMTP unset it throws a
-  clear configuration error** instead of pretending to send — surfaced at boot as
-  `CONFIG PROBLEM` (email features effectively disabled until SMTP configured).
-  The preview endpoint `GET /api/dev/outbox` requires `ALLOW_DEV_EMAIL_PREVIEW=true`
-  *and* non-production.
+  development outbox console line (recipient + subject only) exists only in the
+  explicit development fixture mode.
+- **Dev email outbox isolation:** complete bodies are persisted ONLY when
+  `EMPIRE_ENV=development` (or the `test` in-memory fixture) is explicit; staging/
+  production persist nothing but minimal delivery metadata (kind/status/safe error
+  identifier — never bodies, subjects, recipients or SMTP error text). The old
+  `GET /api/dev/outbox` browser route was REMOVED after review: a tunnel makes
+  "local" servers reachable from anywhere and environment flags are not
+  authorization. Inspect the fixture locally with
+  `ALLOW_DEV_EMAIL_PREVIEW=true npm run email:outbox` (CLI, refuses non-development).
+  Migration `0003_purge_email_bodies.sql` purged any previously stored bodies and
+  disabled outstanding unused email tokens at upgrade time (accounts and game data
+  untouched).
+- **Guest preview:** with `AUTH_ACCOUNTS_ENABLED=false` every account/credential or
+  social endpoint refuses server-side with "Guest preview — accounts are not
+  available yet." Guest game flows are unaffected; existing accounts/data remain.
 
 ## Known permission limitations (honest disclosure)
 

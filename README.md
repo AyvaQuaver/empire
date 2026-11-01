@@ -50,9 +50,10 @@ npm run cleanup    # one-off retention sweep (also runs hourly in-process)
 Useful bits:
 
 - `npm run db:reset` deletes the local database file.
-- Dev-only email preview: run with `ALLOW_DEV_EMAIL_PREVIEW=true` and without SMTP
-  configured; verification/reset emails land in the local `email_outbox` table and
-  are readable at `GET /api/dev/outbox` (local machine only).
+- Dev-only email fixture: in local development with `ALLOW_DEV_EMAIL_PREVIEW=true`
+  and no SMTP, verification/reset emails land in the local `email_outbox` table.
+  There is **no browser route for them** — inspect locally with
+  `npm run email:outbox`, a CLI that refuses to run outside local development.
 - On boot, the server runs migrations from `server/migrations/0001_init.sql` and
   keeps `robots: noindex` on the SPA.
 
@@ -67,7 +68,8 @@ Useful bits:
 | `APP_BASE_URL` | Base URL for invitation/verify/reset links and QR codes | `http://localhost:5173` |
 | `CORS_ORIGINS` | Comma-separated allowed browser origins | `http://localhost:5173` |
 | `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASSWORD`/`EMAIL_FROM` | Outbound email; **required in staging/production** | unset |
-| `ALLOW_DEV_EMAIL_PREVIEW` | Enables `GET /api/dev/outbox`; `EMPIRE_ENV=development` only (validated) | unset |
+| `ALLOW_DEV_EMAIL_PREVIEW` | Enables the local CLI outbox reader (`npm run email:outbox`); valid only with `EMPIRE_ENV=development` (validated) | unset |
+| `AUTH_ACCOUNTS_ENABLED` | `false` = explicit guest-only preview: account/social endpoints refuse server-side while guest play continues; unset = `true` | unset |
 | `CLEANUP_TOKEN` | Optional token for `POST /api/internal/cleanup` (platform CRON) | unset (404 without it) |
 
 ## Fonts & assets
@@ -81,41 +83,46 @@ Useful bits:
 
 One variable chooses the deployment environment explicitly:
 
-| `EMPIRE_ENV` | Meaning | Secrets | SMTP | Dev outbox |
+| `EMPIRE_ENV` | Meaning | Stable secret | SMTP | Dev outbox |
 | --- | --- | --- | --- | --- |
-| `development` | Local dev machine | Documented defaults allowed | Optional (outbox used) | OK with `ALLOW_DEV_EMAIL_PREVIEW=true` |
-| `test` | Automated tests (in-memory DB) | Defaults | Optional | Never exposed as a route |
-| `staging` | Deployed staging (shared prod hardening) | **Must be configured** | **Must be configured** | Never |
-| `production` | Live | **Must be configured** | **Must be configured** | Never |
+| `development` | Local dev machine | Default OK | Optional (fixture used) | CLI tool with explicit flag |
+| `test` | Automated tests (in-memory DB) | Default OK | Optional (fixture) | n/a (DB fixture only) |
+| `staging` | Deployed staging (prod hardening) | **Required** | Required **unless `AUTH_ACCOUNTS_ENABLED=false`** | Never |
+| `production` | Live | **Required** | Required **unless `AUTH_ACCOUNTS_ENABLED=false`** | Never |
 
-(`EMPIRE_ENV` falls back to `NODE_ENV`. Unknown values fall back to `development` for the
-local CLI, but the boot validator pays attention to staging/production explicitly.)
+Rules enforced by code and tests:
 
-**Staging/production refuse to start** (`npm run server` → `validateDeploymentConfig` in
-`server/src/config.ts`) when any of the following is missing, blank or an obvious
-placeholder:
-
-- `SESSION_SECRET` — a stable, unique secret. Generate with `openssl rand -base64 32`,
-  set it as an environment variable in the hosting provider's secret store, and never
-  commit it. It must stay EQUAL across restarts and redeploys: it is the scrypt pepper,
-  so **changing it makes existing password hashes unverifiable** — every user would
-  need a password reset. There is no automatic rotation by design; rotation requires a
-  migration strategy (store per-hash pepper version + rehash on next login).
-- Complete SMTP configuration (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
-  `SMTP_PASSWORD`, valid `EMAIL_FROM`) — verification and password-reset email have
-  no other transport. Later delivery failures surface as a generic 502/"try again"
-  and never echo tokens or leaks.
-- `ALLOW_DEV_EMAIL_PREVIEW` must be removed for these environments — contradictory
-  configuration is rejected at boot, and the `/api/dev/outbox` route additionally
-  only exists when `EMPIRE_ENV=development`.
-
-The dev outbox stores verification/reset links ONLY in development/test local
-databases and is readable only through the local-machine preview route. Staging and
-production never write reset links to an outbox, never return them in API responses,
-and never log them.
-
-Config problems print each failing area in a way that never includes a secret value,
-and the process exits non-zero **before accepting requests**.
+- **Unknown environment values are REJECTED.** `EMPIRE_ENV=stagng` (or a blank /
+  whitespace value, or an invalid explicit `NODE_ENV`) refuses to start. A supported
+  value in `EMPIRE_ENV` wins over `NODE_ENV`; if nothing is supplied, the documented
+  default is `development`.
+- **Stable secret.** Generate with `openssl rand -base64 32`, keep it in the host's
+  secret store, never commit it, keep it identical across restarts/redeploys. It is
+  the scrypt pepper: **changing it makes existing password hashes unverifiable**
+  (every user would need a reset). No automatic rotation; rotation needs a
+  migration (per-hash pepper version + rehash at next login).
+- **SMTP.** Required in staging/production whenever `AUTH_ACCOUNTS_ENABLED` is `true`
+  (verification/reset need real delivery). A guest-only preview
+  (`AUTH_ACCOUNTS_ENABLED=false`) may omit SMTP but STILL requires the stable secret
+  and all other production hardening. Delivery records persist only minimal metadata
+  (type/status/safe error identifier) — never bodies, subjects, recipients or token
+  URLs. Later delivery failures surface as generic errors that never echo tokens.
+  Validation/hashed-token storage itself is unchanged and stays single-use.
+- **Development outbox (fixture).** The email fixture persists complete bodies ONLY
+  in `EMPIRE_ENV=development` when `ALLOW_DEV_EMAIL_PREVIEW=true` (or in `test` as an
+  in-memory fixture). There is NO browser outbox route anymore — inspect locally with
+  `ALLOW_DEV_EMAIL_PREVIEW=true npm run email:outbox`, a CLI that also refuses to run
+  outside development. An earlier `/api/dev/outbox` browser route was fully removed.
+- **Guest preview.** `AUTH_ACCOUNTS_ENABLED=false` disables register/sign-in/
+  verify/resend/forgot/reset/delete, friends, search and invites SERVER-side (403
+  with "Guest preview — accounts are not available yet."). Guest play (rooms, words,
+  readings, results, guest stats) is untouched, existing accounts are neither
+  deleted nor revoked, and re-enabling accounts restores the flows. The frontend
+  reads a safe capability flag (`GET /api/capabilities`) and replaces account CTAs
+  with "Guest preview — accounts are not available yet."
+- Validation runs BEFORE the database is opened, migrations run, schedulers start
+  or any request is accepted; failures list each problem area without printing
+  secret values.
 
 ## Deployment notes (staging)
 

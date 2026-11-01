@@ -6,13 +6,25 @@ import { useSession } from "../App";
 import { Page } from "../App";
 
 function AuthLayout({ children, title }: { children: React.ReactNode; title: string }) {
+  const session = useSession();
   return (
     <Page>
       <Link to="/" className="wordmark wordmark-lg wordmark-underline" aria-label="Back to home">
         EMPIRE
       </Link>
       <h2 style={{ fontSize: 26 }}>{title}</h2>
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{children}</div>
+      {session.accountsEnabled === false ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <p className="error-text" role="alert">
+            <span aria-hidden="true">🔒</span> Guest preview — accounts are not available yet. You can play as a guest.
+          </p>
+          <Link to="/" className="btn-secondary btn-cta">
+            Play a game
+          </Link>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{children}</div>
+      )}
     </Page>
   );
 }
