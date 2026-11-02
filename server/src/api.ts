@@ -10,6 +10,7 @@ import * as roomsService from "./services/rooms.js";
 import * as roundsService from "./services/rounds.js";
 import * as resultsService from "./services/results.js";
 import * as historyService from "./services/history.js";
+import * as profileService from "./services/profile.js";
 import * as friendsService from "./services/friends.js";
 import { runCleanup } from "./services/cleanup.js";
 import { buildRoomSnapshot } from "./snapshot.js";
@@ -167,8 +168,25 @@ export function buildRouter(db: DB): Router {
     void s;
     res.json({
       signedIn: !!user,
-      user: user ? { id: user.id, username: user.username, emailVerified: !!user.email_verified_at } : null,
+      user: user ? { ...userProfilePayload(db, user), emailVerified: !!user.email_verified_at } : null,
     });
+  });
+
+
+  // -- profile ------------------------------------------------------------
+  // Editable display name for the AUTHENTICATED user only. Sign-in username,
+  // email and credentials are untouched; history bound by account id keeps
+  // following the same person.
+  router.patch("/me/profile", (req, res, next) => {
+    try {
+      const s = requireSession(req);
+      if (!s.user_id) throw new AppError(ERR.UNAUTHENTICATED, 401, "Sign in to edit your profile.");
+      rateLimitOr429(`profile:user:${s.user_id}`, 20, 5 * 60 * 1000);
+      const profile = profileService.updateDisplayName(db, s.user_id, req.body?.displayName);
+      res.json(profile);
+    } catch (err) {
+      next(err);
+    }
   });
 
   // -- rooms -------------------------------------------------------------
@@ -196,6 +214,9 @@ export function buildRouter(db: DB): Router {
         code: req.body?.code ? String(req.body.code) : undefined,
         invitationToken: req.body?.invitationToken ? String(req.body.invitationToken) : undefined,
         displayName: String(req.body?.displayName ?? ""),
+        // Room-scope duplicate resolution for signed-in players: applied to
+        // THIS membership only, the account's display name is untouched.
+        lobbyNickname: req.body?.lobbyNickname ? String(req.body.lobbyNickname) : undefined,
       });
       res.json({ room: { code: out.room.code }, reconnected: out.reconnected });
     } catch (err) {
@@ -726,6 +747,12 @@ function sessionPlayerIds(db: DB, sessionId: string): string[] {
     .prepare("SELECT id FROM players WHERE session_id = ?")
     .all(sessionId) as { id: string }[];
   return rows.map((r) => r.id);
+}
+
+// Profile payload for /me: persists the avatar colour on first read.
+function userProfilePayload(db: DB, user: { id: string; username: string; display_name?: string | null; avatar_color?: string | null }) {
+  const profile = profileService.ensureProfile(db, user);
+  return { id: user.id, username: user.username, displayName: profile.displayName, avatarColor: profile.avatarColor };
 }
 
 function statsForSession(db: DB, s: { id: string; user_id: string | null }) {

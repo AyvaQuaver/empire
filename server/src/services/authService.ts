@@ -3,6 +3,7 @@ import type { DB } from "../db.js";
 import { AppError, ERR } from "../errors.js";
 import { randomToken, sha256, randomId } from "../ids.js";
 import { hashPassword, verifyPassword, dummyHashWork, getUser } from "../auth.js";
+import { defaultAvatarColor } from "./profile.js";
 import { validateUsername, passwordStrength, normalizeText } from "../validation.js";
 import { deliverEmail, passwordResetEmailContent, verificationEmailContent } from "../email.js";
 import { config } from "../config.js";
@@ -71,8 +72,8 @@ export async function register(
     }
     const id = randomId();
     db.prepare(
-      "INSERT INTO users (id, username, username_canonical, email, email_canonical, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run(id, username.display, username.normalized, email.display, email.normalized, hash, Date.now());
+      "INSERT INTO users (id, username, username_canonical, email, email_canonical, password_hash, display_name, avatar_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(id, username.display, username.normalized, email.display, email.normalized, hash, username.display, defaultAvatarColor(id), Date.now());
 
     // Upgrade the guest session: memberships survive because players.session_id unchanged.
     db.prepare("UPDATE sessions SET user_id = ? WHERE id = ?").run(id, sessionId);

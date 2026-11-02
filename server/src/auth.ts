@@ -45,12 +45,14 @@ export interface UserData {
   email_canonical: string;
   email_verified_at: number | null;
   created_at: number;
+  display_name?: string | null;
+  avatar_color?: string | null;
 }
 
 export function getUser(db: DB, id: string): UserData | null {
   const row = db
     .prepare(
-      "SELECT id, username, username_canonical, email, email_canonical, email_verified_at, created_at FROM users WHERE id = ?",
+      "SELECT id, username, username_canonical, email, email_canonical, email_verified_at, created_at, display_name, avatar_color FROM users WHERE id = ?",
     )
     .get(id) as UserData | undefined;
   return row ?? null;

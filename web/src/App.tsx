@@ -15,6 +15,10 @@ import { HowToPlayPage, PrivacyPage, NotFoundPage } from "./pages/StaticPages";
 interface SessionCtx {
   signedIn: boolean;
   username: string | null;
+  /** Public, editable name shown to other players (account display name). */
+  displayName: string | null;
+  /** Persisted avatar palette key for the signed-in account. */
+  avatarColor: string | null;
   emailVerified: boolean;
   loading: boolean;
   /** Server-declared capability flag (guest preview disables accounts). */
@@ -27,6 +31,8 @@ interface SessionCtx {
 const SessionContext = createContext<SessionCtx>({
   signedIn: false,
   username: null,
+  displayName: null,
+  avatarColor: null,
   emailVerified: false,
   loading: true,
   accountsEnabled: null,
@@ -43,6 +49,8 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<{
     signedIn: boolean;
     username: string | null;
+    displayName: string | null;
+    avatarColor: string | null;
     emailVerified: boolean;
     loading: boolean;
     accountsEnabled: boolean | null;
@@ -51,6 +59,8 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
   }>({
     signedIn: false,
     username: null,
+    displayName: null,
+    avatarColor: null,
     emailVerified: false,
     loading: true,
     accountsEnabled: null,
@@ -79,6 +89,8 @@ function SessionProvider({ children }: { children: React.ReactNode }) {
       setState({
         signedIn: me.signedIn,
         username: me.user?.username ?? null,
+        displayName: me.user?.displayName ?? null,
+        avatarColor: me.user?.avatarColor ?? null,
         emailVerified: me.user?.emailVerified ?? false,
         loading: false,
         accountsEnabled: caps.accountsEnabled,
