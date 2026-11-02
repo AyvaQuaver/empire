@@ -154,14 +154,44 @@ export interface CreateRoomResult {
   invitationToken: string;
 }
 
+/** Lobby naming for a session: signed-in players are named by their ACCOUNT
+ * display name (stable, non-edited by client input); guests keep the name they
+ * typed. `nicknameOverride` (room-scope only, never persisted to the account)
+ * lets a signed-in player resolve an in-room duplicate clearly. */
+function resolveLobbyName(
+  db: DB,
+  sessionId: string,
+  sessionUserId: string | null,
+  provided: string,
+  nicknameOverride?: string,
+): { ok: true; display: string; canonical: string } {
+  let base = typeof provided === "string" ? provided : "";
+  if (sessionUserId) {
+    const user = db.prepare("SELECT display_name FROM users WHERE id = ?").get(sessionUserId) as
+      | { display_name: string | null }
+      | undefined;
+    if (user && user.display_name && user.display_name.trim() !== "") base = user.display_name;
+  }
+  const name = normalizeText(base, GAME.displayNameMax, "displayName");
+  if (!name.ok) throw new AppError(name.code, 400, name.message, { field: name.field });
+  let used = name;
+  if (sessionUserId && nicknameOverride && nicknameOverride.trim() !== "") {
+    const nick = normalizeText(nicknameOverride, GAME.displayNameMax, "lobbyNickname");
+    if (!nick.ok) throw new AppError(nick.code, 400, nick.message, { field: "lobbyNickname" });
+    used = nick;
+  }
+  return { ok: true, display: used.display, canonical: used.normalized };
+}
+
 export function createRoom(
   db: DB,
   sessionId: string,
   sessionUserId: string | null,
   input: { displayName: string; title?: string; genre: string },
 ): CreateRoomResult {
-  const name = normalizeText(input.displayName, GAME.displayNameMax, "displayName");
-  if (!name.ok) throw new AppError(name.code, 400, name.message, { field: name.field });
+  // Signed-in players are named by their account display name; guest input is
+  // only used when the session has no account.
+  const name = resolveLobbyName(db, sessionId, sessionUserId, input.displayName);
   const genre = normalizeText(input.genre, GAME.genreMax, "genre");
   if (!genre.ok) throw new AppError(genre.code, 400, genre.message, { field: genre.field });
   let title = input.title && input.title.trim() !== "" ? input.title : `${name.display}'s game`;
@@ -192,7 +222,7 @@ export function createRoom(
     const playerId = randomId();
     db.prepare(
       "INSERT INTO players (id, room_id, session_id, user_id, display_name, display_name_canonical, join_order, is_organiser, status, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, 0, 1, 'active', ?, ?)",
-    ).run(playerId, roomId, sessionId, sessionUserId, name.display, name.normalized, now, now);
+    ).run(playerId, roomId, sessionId, sessionUserId, name.display, name.canonical, now, now);
     db.prepare("UPDATE rooms SET organiser_player_id = ? WHERE id = ?").run(playerId, roomId);
     db.prepare("INSERT INTO next_round_roster (room_id, player_id) VALUES (?, ?)").run(roomId, playerId);
 
@@ -214,7 +244,7 @@ export function joinRoom(
   db: DB,
   sessionId: string,
   sessionUserId: string | null,
-  input: { code?: string; invitationToken?: string; displayName: string },
+  input: { code?: string; invitationToken?: string; displayName: string; lobbyNickname?: string },
 ): JoinResult {
   let room: RoomRow | null = null;
   if (input.invitationToken) {
@@ -227,8 +257,7 @@ export function joinRoom(
     throw new AppError(ERR.VALIDATION, 400, "Enter a room code to join.");
   }
 
-  const name = normalizeText(input.displayName, GAME.displayNameMax, "displayName");
-  if (!name.ok) throw new AppError(name.code, 400, name.message, { field: name.field });
+  const name = resolveLobbyName(db, sessionId, sessionUserId, input.displayName, input.lobbyNickname);
 
   return withTx(db, (): JoinResult => {
     if (room.state !== "open") {
@@ -264,7 +293,7 @@ export function joinRoom(
       .prepare(
         "SELECT 1 FROM players WHERE room_id = ? AND display_name_canonical = ? AND status = 'active'",
       )
-      .get(room.id, name.normalized);
+      .get(room.id, name.canonical);
     if (clash) {
       throw new AppError(ERR.NAME_TAKEN, 409, "That name is already taken in this room. Pick another.");
     }
@@ -274,7 +303,7 @@ export function joinRoom(
     const playerId = randomId();
     db.prepare(
       "INSERT INTO players (id, room_id, session_id, user_id, display_name, display_name_canonical, join_order, is_organiser, status, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'active', ?, ?)",
-    ).run(playerId, room.id, sessionId, sessionUserId, name.display, name.normalized, joinOrder, now, now);
+    ).run(playerId, room.id, sessionId, sessionUserId, name.display, name.canonical, joinOrder, now, now);
     // While the round is open to joins, the joiner is part of the forming roster.
     db.prepare("INSERT OR IGNORE INTO next_round_roster (room_id, player_id) VALUES (?, ?)").run(
       room.id,

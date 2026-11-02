@@ -47,7 +47,15 @@ export const api = {
 // ---- session shape shared by pages ----
 export interface MeResponse {
   signedIn: boolean;
-  user: { id: string; username: string; emailVerified: boolean } | null;
+  user: {
+    id: string;
+    username: string;
+    emailVerified: boolean;
+    /** Public editable name; equals username until first edited. */
+    displayName: string;
+    /** Curated palette key; stable across refreshes and devices. */
+    avatarColor: string;
+  } | null;
 }
 
 export interface RoomSnapshotResponse {

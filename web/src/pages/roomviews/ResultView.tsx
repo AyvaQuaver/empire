@@ -141,6 +141,15 @@ export function ResultView({ snap, error, act }: { snap: RoomSnapshot; error: st
           </Link>
         </div>
       )}
+      {snap.auth.signedIn === false && (
+        <Link
+          to="/register"
+          className="btn btn-secondary"
+          style={{ marginTop: 6 }}
+        >
+          Create an account to save your history
+        </Link>
+      )}
       <ErrorBanner error={error} />
 
       {/* Winning-word replacement: only the corrected winner's own device may
