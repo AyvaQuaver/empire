@@ -2,6 +2,24 @@
 
 Date: 2026-11-01 · branch: `codex/empire-mvp` (repo: github.com/AyvaQuaver/empire)
 
+## Account profile round (2026-11-02)
+
+- Branch `codex/account-profile`; **PR #3** into `codex/branded-emails`; deployed to **staging at
+  `f0da221`** (production stays on the approved `4b81884` release pending user review of the new screens).
+- Signed-in home avatar (top-right, >=44px target, safe-area aware, curated palette, colour persisted in
+  `users.avatar_color` — assigned deterministically from the account id on first read).
+- Editable display name decoupled from the sign-in username: migration `0006_profile.sql` backfills
+  display names from usernames; `PATCH /api/me/profile` validates (trim, 24 chars, letters required,
+  control chars rejected) and touches ONLY the caller's row; username/email/credentials untouched.
+- Lobby naming: signed-in players are named SERVER-SIDE from their saved display name (client spoofing
+  impossible); room-scope `lobbyNickname` resolves in-room duplicates WITHOUT renaming the account.
+- Crown-wins profile: larger initial, prominent wins, games played secondary, recent history, friends,
+  sign out; deletion isolated in a "Danger zone" panel; "Your first empire is waiting." empty state.
+- Staging verification: existing users sign in; register/verify/reset driven end-to-end with server-injected
+  tokens (mailbox delivery itself was approved earlier); rename persists across sign-out/in; avatar initial
+  follows the name (A/N tested); guest play unaffected; 320/375/390 zero horizontal overflow.
+- Security bump: nodemailer 6.x -> 10.3.1 (clears the current npm-audit advisories; documented).
+
 ## 0000. Mobile-first UX round (2026-11-01) — latest work
 
 Implemented the agreed 9-part mobile-UX product change set (this section), all
