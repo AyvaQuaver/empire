@@ -2,7 +2,7 @@ import { GAME } from "./config.js";
 import type { DB } from "./db.js";
 import { activePlayers, findActivePlayerForSession, getRound, rosterForRound, type RoomRow } from "./services/rooms.js";
 import { getResult, resultView } from "./services/results.js";
-import { progressFor, rosterReadiness, getLease, getStarterPlayer, pendingSpeakerTransferFor } from "./services/rounds.js";
+import { effectiveWordPauseMs, progressFor, rosterReadiness, getLease, getStarterPlayer, pendingSpeakerTransferFor } from "./services/rounds.js";
 
 function playerByIdPublic(db: DB, playerId: string): { id: string; display_name: string } | null {
   const row = db
@@ -20,7 +20,7 @@ export interface RoomSnapshot {
   me: { playerId: string; displayName: string; isOrganiser: boolean; inRoster: boolean };
   auth: { signedIn: boolean; username: string | null };
   room: { code: string; title: string; genre: string; state: string };
-  round: { id: string; seq: number; state: string; minPlayers: number; maxPlayers: number };
+  round: { id: string; seq: number; state: string; minPlayers: number; maxPlayers: number; wordPauseMs: number };
   players: {
     playerId: string;
     displayName: string;
@@ -119,6 +119,8 @@ export function buildRoomSnapshot(db: DB, room: RoomRow, sessionId: string, base
       state: round.state,
       minPlayers: GAME.minPlayers,
       maxPlayers: GAME.maxPlayers,
+      // Round-authoritative inter-word pacing; the client falls back to 1000.
+      wordPauseMs: effectiveWordPauseMs(round),
     },
     players: playerViews,
     rosterPreview,

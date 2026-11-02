@@ -143,6 +143,56 @@ export function submitWord(
 
 // ---- Reading start ----
 
+
+/* Round-authoritative word pacing (see migration 0005): one utterance completes,
+ * a gap follows, then the next word starts. Only these values are accepted;
+ * anything else is a validation error. NULL on the row means the speaker default
+ * (1000). The authorised speaker may change it before playback or while paused;
+ * a replacement speaker inherits the active round's value. */
+export const ALLOWED_WORD_PAUSE_MS = [1000, 1500, 2000, 3000] as const;
+export const DEFAULT_WORD_PAUSE_MS = 1000;
+
+export function effectiveWordPauseMs(round: RoundRow | null): number {
+  const value = round?.word_pause_ms ?? null;
+  return (ALLOWED_WORD_PAUSE_MS as readonly number[]).includes(value ?? -1) ? (value as number) : DEFAULT_WORD_PAUSE_MS;
+}
+
+/** Validate + set the round's pacing. Authorisation: the organiser OR the
+ * current speaker-lease holder. Caller supplies the round; the DB row wins. */
+export function setWordPause(
+  db: DB,
+  room: RoomRow,
+  round: RoundRow,
+  sessionId: string,
+  requestedMs: number | null,
+): number {
+  if (round.state !== "ready_to_read" && round.state !== "reading") {
+    throw new AppError(ERR.STATE, 409, "Pacing can only change while preparing or running readings.");
+  }
+  const authorised =
+    (() => {
+      try {
+        requireOrganiser(db, room, sessionId);
+        return true;
+      } catch {
+        const lease = getLease(db, round.id);
+        return !!(lease && lease.killed !== 1 && lease.expires_at > Date.now() && lease.holder_session_id === sessionId);
+      }
+    })();
+  if (!authorised) {
+    throw new AppError(ERR.FORBIDDEN, 403, "Only the organiser or the current speaker can change pacing.");
+  }
+  if (requestedMs === null) {
+    throw new AppError(ERR.VALIDATION, 400, "Choose a pause between words.");
+  }
+  const ms = Number(requestedMs);
+  if (!(ALLOWED_WORD_PAUSE_MS as readonly number[]).includes(ms)) {
+    throw new AppError(ERR.VALIDATION, 400, "Unsupported pause between words.");
+  }
+  db.prepare("UPDATE rounds SET word_pause_ms = ?, updated_at = ? WHERE id = ?").run(ms, Date.now(), round.id);
+  return ms;
+}
+
 export interface StartReadingResult {
   round: RoundRow;
   words: string[];
