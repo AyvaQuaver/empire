@@ -11,7 +11,7 @@ describe("branded account emails", () => {
       expect(mail.body).toContain(`expires in ${ttl / 3600000} hour`);
       expect(mail.html).toContain(`expires in ${ttl / 3600000} hour`);
       expect(mail.html).not.toContain("Test environment");
-      expect(mail.html).toContain('https://playempire.uk/email/empire-home-brand-v2.png');
+      expect(mail.html).toContain('https://playempire.uk/email/empire-compact-light-v3.png');
       expect(mail.html).not.toContain('♛');
       expect(mail.html).not.toContain('#f4ecdf');
       expect(mail.html).toContain('bgcolor="#f0503b"');
