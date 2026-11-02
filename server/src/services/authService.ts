@@ -7,8 +7,7 @@ import { validateUsername, passwordStrength, normalizeText } from "../validation
 import { deliverEmail, passwordResetEmailContent, verificationEmailContent } from "../email.js";
 import { config } from "../config.js";
 
-const VERIFY_TTL_MS = 24 * 3600 * 1000;
-const RESET_TTL_MS = 3600 * 1000;
+import { VERIFY_TTL_MS, RESET_TTL_MS } from "../emailTemplates.js";
 const RESEND_COOLDOWN_MS = 2 * 60 * 1000;
 
 export interface UserView {
@@ -85,10 +84,10 @@ export async function register(
     return { id, email: email.display, verifyToken };
   });
   try {
-    const { subject, body } = verificationEmailContent(
+    const content = verificationEmailContent(
       `${config.appBaseUrl}/verify-email?token=${created.verifyToken}`,
     );
-    await deliverEmail(db, { to: created.email, kind: "verify_email", subject, body });
+    await deliverEmail(db, { to: created.email, kind: "verify_email", ...content });
   } catch {
     // Registration succeeded; the verification email can be resent later.
   }
@@ -134,7 +133,7 @@ export async function resendVerification(db: DB, sessionId: string): Promise<voi
   ).run(user.id, sha256(token), expiresAt, Date.now());
   const content = verificationEmailContent(`${config.appBaseUrl}/verify-email?token=${token}`);
   try {
-    await deliverEmail(db, { to: row.email, kind: "verify_email", subject: content.subject, body: content.body });
+    await deliverEmail(db, { to: row.email, kind: "verify_email", ...content });
   } catch {
     throw new AppError(ERR.EMAIL_FAILED, 502, "We couldn't send the email right now. Please try again shortly.");
   }
@@ -183,7 +182,7 @@ export async function forgotPassword(db: DB, usernameOrEmail: string): Promise<v
     const token = issueToken(db, row.id, "password_reset", RESET_TTL_MS);
     const content = passwordResetEmailContent(`${config.appBaseUrl}/reset-password?token=${token}`);
     try {
-      await deliverEmail(db, { to: row.email, kind: "password_reset", subject: content.subject, body: content.body });
+      await deliverEmail(db, { to: row.email, kind: "password_reset", ...content });
     } catch {
       // fall through: response is identical either way
     }

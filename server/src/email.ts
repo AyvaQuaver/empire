@@ -17,27 +17,10 @@ export interface QueuedEmail {
   kind: "verify_email" | "password_reset";
   subject: string;
   body: string;
+  html?: string;
 }
 
-/** Kept for compatibility with existing call sites (subject/body construction). */
-export interface EmailContent {
-  subject: string;
-  body: string;
-}
-
-export function verificationEmailContent(verifyUrl: string): EmailContent {
-  return {
-    subject: "Confirm your Empire account",
-    body: `Welcome to Empire!\n\nConfirm your email address:\n${verifyUrl}\n\nIf you didn't create an Empire account, you can ignore this email.`,
-  };
-}
-
-export function passwordResetEmailContent(resetUrl: string): EmailContent {
-  return {
-    subject: "Reset your Empire password",
-    body: `A password reset was requested for your Empire account.\n\nReset your password:\n${resetUrl}\n\nIf you didn't request this, you can ignore this email. The link expires in one hour.`,
-  };
-}
+export { verificationEmailContent, passwordResetEmailContent } from "./emailTemplates.js";
 
 // ---- test-only in-memory transport injection ------------------------------
 type TestTransport = (mail: QueuedEmail) => Promise<void>;
@@ -75,6 +58,7 @@ async function sendViaSmtpOrError(mail: QueuedEmail): Promise<void> {
     to: mail.to,
     subject: mail.subject,
     text: mail.body,
+    html: mail.html,
   });
 }
 
@@ -85,7 +69,7 @@ async function sendViaSmtpOrError(mail: QueuedEmail): Promise<void> {
  */
 export async function deliverEmailWithConfig(
   db: DB,
-  mail: { to: string; kind?: string; subject: string; body: string },
+  mail: { to: string; kind?: string; subject: string; body: string; html?: string },
   opts: { env: DeploymentEnv; smtpHost?: string; smtpUser?: string; smtpPassword?: string; smtpFrom?: string; allowDevEmailPreview?: boolean },
 ): Promise<void> {
   if (testTransport) {
@@ -112,6 +96,7 @@ export async function deliverEmailWithConfig(
         kind: (mail.kind as QueuedEmail["kind"]) ?? "verify_email",
         subject: mail.subject,
         body: mail.body,
+        html: mail.html,
       });
       logDelivery(db, mail.kind ?? "email", "sent", null);
       return;
@@ -161,7 +146,7 @@ export async function deliverEmailWithConfig(
 }
 
 /** Real deployment entrypoint. */
-export function deliverEmail(db: DB, mail: { to: string; kind?: string; subject: string; body: string }): Promise<void> {
+export function deliverEmail(db: DB, mail: { to: string; kind?: string; subject: string; body: string; html?: string }): Promise<void> {
   return deliverEmailWithConfig(db, mail, {
     env: config.deploymentEnv,
     smtpHost: config.smtp.host,
