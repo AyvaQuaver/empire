@@ -39,6 +39,7 @@ export interface PlayerRow {
 }
 
 export interface RoundRow {
+  word_pause_ms: number | null;
   id: string;
   room_id: string;
   seq: number;

@@ -63,8 +63,24 @@ export class SpeechRunner {
   private cursor: RunCursor | null = null;
   private activeHooks: RunHooks | null = null;
 
+  private pauseMs: number;
+
   constructor(adapter: SpeechAdapter, private opts?: { pauseMs?: number }) {
     this.adapter = adapter;
+    // 1s speaker default; the server-authoritative round value seeds the UI.
+    this.pauseMs = opts?.pauseMs ?? 1000;
+  }
+
+  /** Update the inter-word gap live: a change while paused applies at the next
+   * gap (no restart, no cursor movement). Values are clamped defensively; the
+   * server validates the allowed set for round persistence. */
+  setPauseMs(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    this.pauseMs = Math.round(ms);
+  }
+
+  get currentPauseMs(): number {
+    return this.pauseMs;
   }
 
   subscribe(fn: (s: RunStatus) => void): () => void {
@@ -116,7 +132,8 @@ export class SpeechRunner {
     this.adapter.cancel();
     this.pauseFlag = false;
     this.activeHooks = hooks ?? null;
-    const pauseMs = this.opts?.pauseMs ?? 1500;
+    // The inter-word gap reads the LIVE value: setPauseMs between utterances
+    // (a paused change) applies at the next gap without restarting the run.
     const current = (): boolean =>
       id === this.runId && (hooks?.isCurrent ? hooks.isCurrent() : true);
     const first = resumeIndex === null || resumeIndex < -1 ? -1 : resumeIndex;
@@ -140,6 +157,14 @@ export class SpeechRunner {
         if (!current()) {
           this.emit({ phase: "idle", readingNumber: null, wordIndex: null });
           return "cancelled";
+        }
+        // A pause requested DURING the inter-word delay must land BEFORE the
+        // next word: park at the exact next word (never speak it), with the
+        // same bookkeeping as a boundary pause.
+        if (this.maybePause()) {
+          this.cursor = { readingNumber, index: i, totalWords: words.length };
+          this.emit({ phase: "paused", readingNumber, wordIndex: i, totalWords: words.length });
+          return "paused";
         }
         this.cursor = { readingNumber, index: i, totalWords: words.length };
         this.emit({ phase: "speaking", wordIndex: i });
@@ -178,7 +203,7 @@ export class SpeechRunner {
           return "paused";
         }
         this.emit({ phase: "pausing" });
-        await this.pause(pauseMs, current);
+        await this.pause(this.pauseMs, current);
       }
       if (!current()) {
         this.emit({ phase: "idle", readingNumber: null, wordIndex: null });

@@ -328,6 +328,19 @@ export function buildRouter(db: DB): Router {
   });
 
   // -- readings ----------------------------------------------------------
+  // Round-authoritative word pacing (see rounds.ts). Speaker/organiser only,
+  // validated against the allowed set; a replacement speaker inherits it.
+  router.post("/rounds/:id/word-pause", (req, res, next) => {
+    try {
+      const round = requireRound(db, String(req.params.id));
+      const room = roomsService.getRoomById(db, round.room_id) as roomsService.RoomRow;
+      const ms = roundsService.setWordPause(db, room, round, sessionIdOf(req), Number(req.body?.ms ?? null));
+      res.json({ ok: true, wordPauseMs: ms });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.post("/rooms/:code/reading/start", (req, res, next) => {
     try {
       const room = roomByParam(req);

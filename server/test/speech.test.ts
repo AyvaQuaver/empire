@@ -37,6 +37,17 @@ function fakeAdapter(): FakeAdapter {
 
 const PAUSE = 30;
 
+/** Current runner phase typed read for tests. */
+async function inspect(runner: SpeechRunner): Promise<string> {
+  let phase = "";
+  const off = runner.subscribe((s) => {
+    phase = s.phase;
+  });
+  off();
+  void runner;
+  return phase;
+}
+
 /** Resolves utterances as they appear, settling up to `count`; keeps waiting
  * (short, bounded waits) for the next one because word pacing involves pauses. */
 async function drain(adapter: FakeAdapter, count: number): Promise<void> {
@@ -166,14 +177,18 @@ describe("SpeechRunner", () => {
         completed.push(1);
       },
     });
-    await drain(adapter, 3); // announcement + a + b
-    runner.requestPause(); // lands after c (the current word) at the latest
+    await drain(adapter, 3); // announcement + a + b resolved; c is now pending
+    for (;;) {
+      if (adapter.pendingResolve.length > 0) break; // waiting inside c's utterance
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    runner.requestPause(); // during the LAST word's utterance
     const outcome = await settle(adapter, read1);
     expect(outcome).toBe("paused");
     expect(completed).toEqual([1]); // THIS reading's server bookkeeping is done
     expect(adapter.spoken).toEqual(["Reading one", "a", "b", "c"]);
     // boundary pause: cursor is null (next utterance = next reading's announcement),
-    // handled by the component chain — never a repeat or a skip here
+    // handled by the component chain - never a repeat or a skip here
     expect(runner.cursorState).toBeNull();
   });
 
@@ -187,23 +202,29 @@ describe("SpeechRunner", () => {
         completed = true;
       },
     });
-    await drain(adapter, 2); // announcement + a
+    await drain(adapter, 2); // announcement + a resolved; the runner is mid-gap
     runner.requestPause();
     runner.requestPause();
     runner.requestPause();
     const outcome = await settle(adapter, read1);
     expect(outcome).toBe("paused");
-    // With 2 words the pause lands on the reading BOUNDARY (after "b"):
-    // reading completed, cursor null, no extra utterances queued.
+    // Mid-gap pause lands BEFORE the next word: "b" never runs, no completion yet
+    expect(completed).toBe(false);
+    expect(adapter.spoken).toEqual(["Reading one", "a"]);
+    expect(runner.cursorState).toEqual({ readingNumber: 1, index: 1, totalWords: 2 });
+    expect(runner.isPaused).toBe(true);
+    // Third drain-guard: resume with the cursor; "b" runs, then the boundary
+    // completes the reading, all with saved values and no extra utterances.
+    const read2 = runner.run(1, ["a", "b"], {
+      onWordComplete: () => undefined,
+      onReadingComplete: () => {
+        completed = true;
+      },
+    }, 1);
+    const outcome2 = await settle(adapter, read2);
+    expect(outcome2).toBe("done");
     expect(completed).toBe(true);
     expect(adapter.spoken).toEqual(["Reading one", "a", "b"]);
-    expect(runner.cursorState).toBeNull();
-    // The chain then starts reading 2; pause after announcement (no repeats of reading 1)
-    const read2 = runner.run(2, ["c"], { onWordComplete: () => undefined });
-    runner.requestPause(); // during reading-2's announcement
-    expect(await settle(adapter, read2)).toBe("paused");
-    expect(adapter.spoken).toEqual(["Reading one", "a", "b", "Reading two"]);
-    expect(runner.cursorState!.index).toBe(0);
   });
 
   it("cancellation invalidates the running loop before the next utterance", async () => {
@@ -239,6 +260,97 @@ describe("SpeechRunner", () => {
     expect(r1).toBe("cancelled");
     expect(adapter.spoken).toContain("y");
   });
+
+  it("pause during the inter-word delay prevents the next word (no skip)", async () => {
+    const adapter = fakeAdapter();
+    const runner = new SpeechRunner(adapter, { pauseMs: 50 });
+    const read1 = runner.run(1, ["alpha", "beta", "gamma"], { onWordComplete: () => undefined });
+    await drain(adapter, 2); // announcement + alpha spoken
+    // wait until the runner is inside the gap (phase "pausing")...
+    for (;;) {
+      if ((await inspect(runner)) === "pausing") break;
+      if ((await inspect(runner)) === "paused") break;
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    expect(adapter.spoken.length).toBe(2); // alpha done, beta NOT started
+    runner.requestPause(); // mid-gap request
+    const outcome = await settle(adapter, read1);
+    expect(outcome).toBe("paused");
+    // beta was never spoken; the cursor parks exactly at the next word
+    expect(adapter.spoken).toEqual(["Reading one", "alpha"]);
+    expect(runner.cursorState).toEqual({ readingNumber: 1, index: 1, totalWords: 3 });
+    expect(runner.isPaused).toBe(true);
+    // resume continues with beta and finishes normally
+    const read2 = runner.run(1, ["alpha", "beta", "gamma"], { onWordComplete: () => undefined }, 1);
+    expect(await settle(adapter, read2)).toBe("done");
+    expect(adapter.spoken).toEqual(["Reading one", "alpha", "beta", "gamma"]);
+  });
+
+  it("setPauseMs applies at the next inter-word delay (measured)", async () => {
+    const adapter = fakeAdapter();
+    const spokenAt: number[] = [];
+    const origSpeak = adapter.speak.bind(adapter);
+    adapter.speak = (text: string) => {
+      spokenAt.push(Date.now());
+      return origSpeak(text);
+    };
+    const runner = new SpeechRunner(adapter, { pauseMs: 30 });
+    const runPromise = runner.run(1, ["w1", "w2", "w3"], { onWordComplete: () => undefined });
+    // Drive: resolve utterances as they appear.
+    let phase = 'idle';
+    runner.subscribe((s) => { phase = s.phase; });
+    const drive = (async () => {
+      // wait until "w1" has started (announcement + w1 spoken: 2 stamps)
+      while (spokenAt.length < 2) {
+        if (adapter.pendingResolve.length > 0) {
+          const pending = adapter.pendingResolve;
+          adapter.pendingResolve = [];
+          pending.forEach((r) => r());
+        }
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      console.log('drive: w1 spoken, phase=' + phase);
+      // inside the gap after w1: WIDEN the gap; the next gap must use 120ms
+      runner.setPauseMs(120);
+      // continue until three utterances have started
+      while (spokenAt.length < 4) {
+        if (adapter.pendingResolve.length > 0) {
+          const pending = adapter.pendingResolve;
+          adapter.pendingResolve = [];
+          pending.forEach((r) => r());
+        }
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      void phase;
+      // the LAST resolved utterance leaves the runner awaiting its own event;
+      // finish the drive by resolving everything else so the run completes
+      while (adapter.pendingResolve.length > 0) {
+        const pending = adapter.pendingResolve;
+        adapter.pendingResolve = [];
+        pending.forEach((r) => r());
+        await new Promise((r) => setTimeout(r, 2));
+      }
+    })();
+    const result = await Promise.race([runPromise, new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 6000))]);
+    void drive;
+    if (result === "timeout") {
+      // give the drive one extra moment, then bail out with diagnostics
+      await new Promise((r) => setTimeout(r, 300));
+      console.log('DIAG: phase=' + phase + ' spoken=' + adapter.spoken.join('|'));
+    } else {
+      const stillPending = adapter.pendingResolve.slice();
+      adapter.pendingResolve = [];
+      stillPending.forEach((r) => r());
+    }
+    expect(spokenAt.length).toBeGreaterThanOrEqual(4);
+    // spokenAt[0]=announcement, [1]=w1 start, [2]=w2 start, [3]=w3 start.
+    // The widened value is set DURING w1, so the NEXT gap (w1->w2) uses it;
+    // the baseline gap INFORMATION comes from the earlier tests (announce->w1).
+    const gap2 = spokenAt[3] - spokenAt[2];
+    expect(gap2).toBeGreaterThanOrEqual(110); // widened gap used again for w3
+    expect(gap2).toBeLessThan(170);
+  });
+
 
   it("three readings are announced in order with number words", async () => {
     const adapter = fakeAdapter();

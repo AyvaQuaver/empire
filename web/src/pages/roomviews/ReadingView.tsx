@@ -4,6 +4,7 @@ import { api } from "../../lib/api";
 import { SpeechRunner, createBrowserAdapter, speechSupport, type RunStatus } from "../../lib/speech";
 import { Button, ErrorBanner, Panel, Avatar } from "../../components/ui";
 import { useSpeakerVoice, VoicePanel } from "../../components/VoicePanel";
+import { PacingPanel, useSpeakerPacing } from "../../components/PacingPanel";
 import { Page } from "../../App";
 
 type Act = (fn: () => Promise<unknown>) => () => Promise<void>;
@@ -30,8 +31,17 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
   const runnerRef = useRef<SpeechRunner | null>(null);
 
   if (!runnerRef.current && support.supported) {
-    runnerRef.current = new SpeechRunner(createBrowserAdapter());
+    runnerRef.current = new SpeechRunner(createBrowserAdapter(), {
+      // the round's server-authoritative value seeds the runner before playback
+      pauseMs: snap.round.wordPauseMs ?? 1000,
+    });
   }
+
+  // The round's pacing is server-authoritative: a replaced speaker inherits it,
+  // and a paused pacing change (next gap only) arrives through the next render.
+  useEffect(() => {
+    runnerRef.current?.setPauseMs(snap.round.wordPauseMs ?? 1000);
+  }, [snap.round.wordPauseMs, snap.round.id]);
 
   useEffect(() => {
     const runner = runnerRef.current;
@@ -278,6 +288,8 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
 
   // Voice selection lives on the SPEAKER device only (device-local list).
   const speakerVoice = useSpeakerVoice(support.supported);
+  const speakerPacing = useSpeakerPacing(snap);
+
   const { voiceBusy, voices, currentVoice, applyVoice, testVoice } = speakerVoice;
 
   if (!support.supported) {
@@ -490,6 +502,19 @@ export function ReadingView({ snap, error, act }: { snap: RoomSnapshot; error: s
             Pause keeps your place; resume continues at the exact next word. "Restart this reading" repeats the saved
             order from the beginning. No words are ever shown or shared on any screen.
           </p>
+
+          <PacingPanel
+            valueMs={speakerPacing.valueMs}
+            disabled={
+              // changes blocked while actively speaking or pausing; allowed
+              // before playback and while paused (applies to the next gap)
+              phase === "speaking" || phase === "announcing" || phase === "pause-requested" || phase === "pausing"
+            }
+            onSelect={(ms) => void speakerPacing.setPacing(ms)}
+          />
+          {speakerPacing.error && (
+            <ErrorBanner error={speakerPacing.error} />
+          )}
 
           <VoicePanel
             voices={voices}

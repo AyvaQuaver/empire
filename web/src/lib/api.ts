@@ -60,7 +60,7 @@ export interface RoomSnapshot {
   me: { playerId: string; displayName: string; isOrganiser: boolean; inRoster: boolean };
   auth: { signedIn: boolean; username: string | null };
   room: { code: string; title: string; genre: string; state: string };
-  round: { id: string; seq: number; state: string; minPlayers: number; maxPlayers: number };
+  round: { id: string; seq: number; state: string; minPlayers: number; maxPlayers: number; wordPauseMs: number };
   players: {
     playerId: string;
     displayName: string;

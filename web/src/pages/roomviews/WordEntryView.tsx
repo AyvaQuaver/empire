@@ -4,6 +4,7 @@ import { api } from "../../lib/api";
 import { speechSupport, createBrowserAdapter } from "../../lib/speech";
 import { Avatar, Button, ErrorBanner, Field, Input, Panel, ReadyBadge } from "../../components/ui";
 import { useSpeakerVoice, VoicePanel } from "../../components/VoicePanel";
+import { PacingPanel, speakPacingSample, useSpeakerPacing } from "../../components/PacingPanel";
 import { Page } from "../../App";
 
 type Act = (fn: () => Promise<unknown>) => () => Promise<void>;
@@ -19,6 +20,24 @@ export function WordEntryView({ snap, error, act }: { snap: RoomSnapshot; error:
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [speakingSample, setSpeakingSample] = useState(false);
+  // Neutral pacing sample so the organiser can hear the difference before
+  // readings start; never overlaps the readings (no playback is running yet).
+  const speakPacingSampleNow = async () => {
+    if (speakingSample || speakerPacing.saving) return;
+    setSpeakingSample(true);
+    try {
+      const adapter = createBrowserAdapter();
+      const speak = (text: string) => adapter.speak(text);
+      const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+      await speakPacingSample(speak, delay, speakerPacing.valueMs);
+    } catch {
+      setFieldError("The pacing sample didn't play. Try again, or check the device volume.");
+    } finally {
+      setSpeakingSample(false);
+    }
+  };
+
   const [speakingTest, setSpeakingTest] = useState(false);
   const wordRef = useRef<HTMLInputElement>(null);
   void wordRef;
@@ -71,6 +90,7 @@ export function WordEntryView({ snap, error, act }: { snap: RoomSnapshot; error:
   // The organiser's ready-to-read device is the initial speaker device: this is
   // where the spec wants voice & accent selection, before the readings start.
   const speakerVoice = useSpeakerVoice(support.supported);
+  const speakerPacing = useSpeakerPacing(snap);
   const testSound = async () => {
     setSpeakingTest(true);
     try {
@@ -178,6 +198,19 @@ export function WordEntryView({ snap, error, act }: { snap: RoomSnapshot; error:
               onTest={() => speakerVoice.testVoice(setFieldError)}
             />
           )}
+          {support.supported && (
+        <PacingPanel
+          valueMs={speakerPacing.valueMs}
+          disabled={speakerPacing.saving || speakingSample}
+          onSelect={(ms) => void speakerPacing.setPacing(ms)}
+          testPacing={() => void speakPacingSampleNow()}
+        />
+      )}
+      {speakerPacing.error && (
+        <p className="error-text" role="alert">
+          <span aria-hidden="true">⚠</span> {speakerPacing.error}
+        </p>
+      )}
           <p className="status-text" style={{ margin: 0, textAlign: "center" }}>
             Turn up your volume and keep this screen open.
           </p>
