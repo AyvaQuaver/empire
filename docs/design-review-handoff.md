@@ -30,3 +30,7 @@ The initial email implementation (893ae35) was already deployed to staging and p
 ## Scope of this review
 
 Source reviewed: homepage, crown/wordmark components, design tokens and buttons, email templates. Live home and sign-in inspected; browser-rendered email previews inspected. User inbox colour mismatch is user-reported; its exact mail-client cause has not been diagnosed. Other gameplay screens and physical email-client rendering were not reviewed in this pass.
+
+## Implemented revision
+
+The user explicitly requested implementation after reviewing the unchanged previews. The revised templates now reuse a PNG exported from the existing HomeHero component with the bundled Baloo font, use #fff9ed without a beige card, restore #f0503b/white CTAs and #c7adff accents, and centre the composition throughout. Browser previews checked at 375px; real inbox rendering still needs user review. No app/homepage UI was changed. Revision is staged for preview before production rollout.
